@@ -52,8 +52,8 @@ jobs:
 
       - name: Validate package build
         run: |
-          pip install build
-          python -m build --wheel --no-isolation
+          pip install build setuptools wheel
+          python -m build --wheel
 
   lint:
     name: Lint (advisory)
