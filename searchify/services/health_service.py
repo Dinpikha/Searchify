@@ -14,10 +14,39 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 import uuid
 
-from searchify.config.settings import settings, DOTENV_AVAILABLE, PROJECT_ROOT
+from searchify.config import settings as settings_module
 from searchify.services.session_service import KEYRING_SERVICE, canonical_target, decode_session, session_account
 from searchify.core.file_registry import FileRegistry
 from searchify.core.scanner import Scanner, matches, PROTECTED, signature
+
+# Module-level settings for backward compatibility with tests
+_settings = settings_module.settings
+
+
+def get_settings():
+    import sys
+    module = sys.modules[__name__]
+    return getattr(module, 'settings', _settings)
+
+
+def set_settings(new_settings):
+    global _settings
+    _settings = new_settings
+
+
+# Backward compatibility - property that can be patched
+class _SettingsProxy:
+    def __getattr__(self, name):
+        return getattr(_settings, name)
+    def __setattr__(self, name, value):
+        if name == '_settings':
+            super().__setattr__(name, value)
+        else:
+            setattr(_settings, name, value)
+
+
+_settings_proxy = _SettingsProxy()
+settings = _settings_proxy
 
 
 class NoRedirects(HTTPRedirectHandler):
@@ -59,9 +88,10 @@ def dependencies():
 
 
 class HealthService:
-    def __init__(self, db_path=None, reports_dir=None):
-        self.registry=FileRegistry(db_path or settings.LOCAL_DB_PATH)
-        self.reports_dir=Path(reports_dir or settings.REPORTS_DIR)
+    def __init__(self, db_path=None, reports_dir=None, settings=None):
+        self.settings = settings or settings_module.settings
+        self.registry=FileRegistry(db_path or self.settings.LOCAL_DB_PATH)
+        self.reports_dir=Path(reports_dir or self.settings.REPORTS_DIR)
 
     def _providers(self, offline=False):
         if offline:
@@ -74,8 +104,8 @@ class HealthService:
             jobs['ollama']=(host+'/api/tags',{})
         except ValueError:
             pass
-        if settings.SUPABASE_KEY and valid_supabase_url(settings.SUPABASE_URL):
-            jobs['supabase']=(settings.SUPABASE_URL.rstrip('/')+'/auth/v1/settings',{'apikey':settings.SUPABASE_KEY})
+        if self.settings.SUPABASE_KEY and valid_supabase_url(self.settings.SUPABASE_URL):
+            jobs['supabase']=(self.settings.SUPABASE_URL.rstrip('/')+'/auth/v1/settings',{'apikey':self.settings.SUPABASE_KEY})
         output={name:{'status':'not configured'} for name in ('ollama','supabase')}
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures={name:pool.submit(request_json,url,headers) for name,(url,headers) in jobs.items()}
@@ -88,16 +118,17 @@ class HealthService:
                         output[name]['status']='unavailable'
                         continue
                     models=[row.get('name') for row in data.get('models',[]) if isinstance(row,dict)]
-                    output[name]['summary_model_installed']=settings.SUMMARY_MODEL in models
-                    output[name]['embedding_model_installed']=settings.EMBEDDING_MODEL in models
+                    output[name]['summary_model_installed']=self.settings.SUMMARY_MODEL in models
+                    output[name]['embedding_model_installed']=self.settings.EMBEDDING_MODEL in models
         return output
 
     def authentication(self, inspect_keyring=False):
         if not inspect_keyring:
             return {'status':'not checked (doctor --auth inspects the secure keyring)','database':'not checked'}
         try:
-            target=canonical_target(settings.SUPABASE_URL)
-            api_key=settings.SUPABASE_KEY
+            current_settings = get_settings()
+            target=canonical_target(current_settings.SUPABASE_URL)
+            api_key=current_settings.SUPABASE_KEY
             if not valid_supabase_url(target) or not api_key:
                 return {'status':'invalid Supabase configuration'}
             import keyring
@@ -155,7 +186,7 @@ class HealthService:
         successful=next((report for _,report in reports if not report.get('dry_run') and not report.get('run_errors')
                          and not report['counts']['failed'] and not report['counts']['stale'] and not report.get('remaining')),None)
         recommendations=None
-        review_paths=sorted(Path(settings.REVIEWS_DIR).glob('review-*.json'),key=lambda p:p.stat().st_mtime,reverse=True) if Path(settings.REVIEWS_DIR).is_dir() else []
+        review_paths=sorted(Path(self.settings.REVIEWS_DIR).glob('review-*.json'),key=lambda p:p.stat().st_mtime,reverse=True) if Path(self.settings.REVIEWS_DIR).is_dir() else []
         for path in review_paths:
             try:
                 if path.is_symlink() or path.stat().st_size>8*1024*1024: continue
@@ -166,10 +197,16 @@ class HealthService:
         deps=dependencies()
         providers=self._providers(offline)
         errors=['Local metadata database or journal is unavailable; check permissions and integrity before explicit repair.'] if database_error else []
-        if not DOTENV_AVAILABLE and (PROJECT_ROOT/'.env').exists(): errors.append('python-dotenv unavailable: project .env was not loaded')
+        if not settings_module.DOTENV_AVAILABLE and (settings_module.PROJECT_ROOT/'.env').exists(): errors.append('python-dotenv unavailable: project .env was not loaded')
         if not all(deps.values()): errors.append('Missing or incompatible runtime dependencies')
-        if not valid_supabase_url(settings.SUPABASE_URL) or not settings.SUPABASE_KEY: errors.append('Supabase configuration incomplete or invalid')
-        if settings.EMBEDDING_DIMENSIONS!=768: errors.append('Embedding dimensions do not match the 768-dimensional schema')
+        if not offline:
+            if not valid_supabase_url(self.settings.SUPABASE_URL) or not self.settings.SUPABASE_KEY:
+                errors.append('Supabase configuration incomplete or invalid')
+            if self.settings.EMBEDDING_DIMENSIONS!=768:
+                errors.append('Embedding dimensions do not match the 768-dimensional schema')
+        else:
+            if not valid_supabase_url(self.settings.SUPABASE_URL) or not self.settings.SUPABASE_KEY:
+                errors.append('Supabase configuration not checked (offline mode)')
         if invalid: errors.append('Unreadable local reports')
         for name,value in providers.items():
             if value['status'] in {'unavailable','not configured'}: errors.append(name+' unavailable or not configured')
@@ -183,6 +220,6 @@ class HealthService:
                     last_sync=latest.get('finished_at') if latest else None,
                     last_successful_sync=successful.get('finished_at') if successful else None,
                     providers=providers,authentication=self.authentication(auth and not offline),dependencies=deps,
-                    models={'summarization':settings.SUMMARY_MODEL,'embedding':settings.EMBEDDING_MODEL,'provider':'local Ollama',
-                            'dimensions':settings.EMBEDDING_DIMENSIONS,'runtime_dimensions':'not tested (would require an embedding call)'},
+                    models={'summarization':self.settings.SUMMARY_MODEL,'embedding':self.settings.EMBEDDING_MODEL,'provider':'local Ollama',
+                            'dimensions':self.settings.EMBEDDING_DIMENSIONS,'runtime_dimensions':'not tested (would require an embedding call)'},
                     local_database='unavailable' if database_error else 'available' if self.registry.path.is_file() else 'not created',errors=errors)

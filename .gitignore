@@ -11,3 +11,6 @@ searchify/Modelfile
 searchify.egg-info/
 docs/implementation-plan.md
 docs/integration-readiness.md
+build/
+dist/
+*.egg-info/

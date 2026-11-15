@@ -25,4 +25,5 @@ def run(args):
         line('Start the Ollama app or run ollama serve; verify the configured models are installed.')
     if not args.auth: line('Use doctor --auth to inspect the cached keyring session without refreshing it (macOS may request Keychain access).')
     auth_bad=args.auth and snapshot['authentication'].get('database')!='available'
-    return 1 if snapshot['errors'] or auth_bad else 0
+    fatal_errors=[e for e in snapshot['errors'] if 'not checked' not in e]
+    return 1 if fatal_errors or auth_bad else 0
