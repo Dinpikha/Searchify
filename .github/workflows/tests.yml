@@ -44,6 +44,9 @@ jobs:
           python -m unittest discover -s tests -v
 
       - name: CLI smoke tests
+        env:
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_KEY: ci-placeholder-key
         run: |
           searchify help
           searchify doctor --offline
