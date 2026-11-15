@@ -1,4 +1,5 @@
 """Pure target identities and validation for secure session storage."""
+
 import hashlib
 import json
 from urllib.parse import urlsplit, urlunsplit
@@ -12,15 +13,24 @@ def canonical_target(url):
             raise ValueError
         url = url.strip()
         parsed = urlsplit(url)
-        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
-                or parsed.username is not None or parsed.password is not None
-                or parsed.query or parsed.fragment or any(c.isspace() for c in url)):
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or any(c.isspace() for c in url)
+        ):
             raise ValueError
         host = parsed.hostname.lower()
         if ":" in host:
             host = f"[{host}]"
         port = parsed.port
-        if port is not None and (parsed.scheme, port) not in {("http", 80), ("https", 443)}:
+        if port is not None and (parsed.scheme, port) not in {
+            ("http", 80),
+            ("https", 443),
+        }:
             host += f":{port}"
         return urlunsplit((parsed.scheme, host, parsed.path.rstrip("/"), "", ""))
     except ValueError:
@@ -41,4 +51,6 @@ def decode_session(stored, url):
                 raise ValueError
         return value
     except (TypeError, ValueError):
-        raise ValueError("Cached session is invalid for this Supabase target.") from None
+        raise ValueError(
+            "Cached session is invalid for this Supabase target."
+        ) from None

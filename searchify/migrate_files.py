@@ -1,19 +1,36 @@
-import sqlite3
 import mimetypes
-from pathlib import Path
+import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 from searchify.indexer import DB_PATH
 from searchify.supabase_client import authenticate
 
 CODE_EXTENSIONS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".java",
-    ".c", ".cpp", ".h", ".go", ".rs", ".swift",
-    ".kt", ".sh", ".zsh", ".sql", ".html", ".css"
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".go",
+    ".rs",
+    ".swift",
+    ".kt",
+    ".sh",
+    ".zsh",
+    ".sql",
+    ".html",
+    ".css",
 }
+
 
 def display_path(path):
     return "~/" + str(path.relative_to(Path.home()))
+
 
 def migrate_files():
     client, owner_id = authenticate()
@@ -21,9 +38,7 @@ def migrate_files():
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
 
-        directories = conn.execute(
-            "SELECT id, path FROM directories"
-        ).fetchall()
+        directories = conn.execute("SELECT id, path FROM directories").fetchall()
 
         files = conn.execute(
             """SELECT path, root_id, name, extension,
@@ -31,26 +46,34 @@ def migrate_files():
                FROM files"""
         ).fetchall()
 
-    remote = client.table("directories").select(
-        "id, path"
-    ).eq("owner_id", owner_id).execute()
+    remote = (
+        client.table("directories")
+        .select("id, path")
+        .eq("owner_id", owner_id)
+        .execute()
+    )
 
-    directory_map = {
-        d["path"]: d["id"] for d in remote.data
-    }
+    directory_map = {d["path"]: d["id"] for d in remote.data}
 
-    local_roots = {
-        d["id"]: Path(d["path"]).expanduser().resolve()
-        for d in directories
-    }
+    local_roots = {d["id"]: Path(d["path"]).expanduser().resolve() for d in directories}
 
     existing_hashes = {}
     offset = 0
     while True:
-        page = (client.table("files").select("directory_id, relative_path, content_hash")
-                .eq("owner_id", owner_id).order("id").range(offset, offset + 999).execute().data or [])
+        page = (
+            client.table("files")
+            .select("directory_id, relative_path, content_hash")
+            .eq("owner_id", owner_id)
+            .order("id")
+            .range(offset, offset + 999)
+            .execute()
+            .data
+            or []
+        )
         for record in page:
-            existing_hashes[(record["directory_id"], record["relative_path"])] = record["content_hash"]
+            existing_hashes[(record["directory_id"], record["relative_path"])] = record[
+                "content_hash"
+            ]
         if len(page) < 1000:
             break
         offset += len(page)
@@ -74,8 +97,7 @@ def migrate_files():
         category = "code" if ext in CODE_EXTENSIONS else "text"
 
         modified_at = datetime.fromtimestamp(
-            file["mtime_ns"] / 1_000_000_000,
-            tz=timezone.utc
+            file["mtime_ns"] / 1_000_000_000, tz=timezone.utc
         ).isoformat()
 
         record = {
@@ -93,15 +115,19 @@ def migrate_files():
             "status": "metadata_only",
         }
         if existing_hashes.get((remote_directory_id, relative_path)) != file["sha256"]:
-            record.update(summary_status="pending", summary_error=None, summary_updated_at=None)
+            record.update(
+                summary_status="pending", summary_error=None, summary_updated_at=None
+            )
         payload.append(record)
 
     synced = 0
     # Keep payload column sets identical; unchanged records must not reset status.
     for changed in (True, False):
-        records = [record for record in payload if ("summary_status" in record) == changed]
+        records = [
+            record for record in payload if ("summary_status" in record) == changed
+        ]
         for start in range(0, len(records), 100):
-            batch = records[start:start + 100]
+            batch = records[start : start + 100]
             client.table("files").upsert(
                 batch, on_conflict="directory_id,relative_path"
             ).execute()

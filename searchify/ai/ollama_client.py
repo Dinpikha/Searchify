@@ -1,10 +1,11 @@
 """Local-only Ollama transport with bounded transient retries."""
+
 import ipaddress
 import json
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from searchify.config.settings import settings
 
@@ -23,62 +24,90 @@ class _NoRedirects(HTTPRedirectHandler):
 
 class OllamaClient:
     def __init__(self, host=None, timeout=180, retries=2):
-        self.host = (host or settings.OLLAMA_HOST).rstrip('/')
+        self.host = (host or settings.OLLAMA_HOST).rstrip("/")
         parsed = urlsplit(self.host)
         try:
             local = ipaddress.ip_address(parsed.hostname).is_loopback
         except (ValueError, TypeError):
-            local = parsed.hostname == 'localhost'
-        if parsed.scheme != 'http' or not local or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
-            raise ValueError('Ollama must use a local loopback HTTP address.')
+            local = parsed.hostname == "localhost"
+        if (
+            parsed.scheme != "http"
+            or not local
+            or parsed.username
+            or parsed.password
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Ollama must use a local loopback HTTP address.")
         if retries < 0 or timeout <= 0:
-            raise ValueError('Invalid Ollama retry or timeout configuration.')
+            raise ValueError("Invalid Ollama retry or timeout configuration.")
         self.timeout, self.retries = timeout, retries
         self.opener = build_opener(ProxyHandler({}), _NoRedirects())
 
     def check_available(self):
         """Probe the local runtime without sending a prompt or file contents."""
-        request = Request(self.host + '/api/tags', method='GET')
+        request = Request(self.host + "/api/tags", method="GET")
         for attempt in range(self.retries + 1):
             try:
-                with self.opener.open(request, timeout=min(self.timeout, 5)) as response:
+                with self.opener.open(
+                    request, timeout=min(self.timeout, 5)
+                ) as response:
                     data = json.load(response)
-                if not isinstance(data, dict) or not isinstance(data.get('models'), list) or data.get('error'):
-                    raise ValueError('Invalid runtime response')
+                if (
+                    not isinstance(data, dict)
+                    or not isinstance(data.get("models"), list)
+                    or data.get("error")
+                ):
+                    raise ValueError("Invalid runtime response")
                 return
             except (OSError, ValueError, UnicodeError):
                 if attempt < self.retries:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
         raise OllamaUnavailableError(
-            'Ollama is unavailable. Start the Ollama app or run `ollama serve`, '
-            'check OLLAMA_HOST points to the local server, then retry the command.'
+            "Ollama is unavailable. Start the Ollama app or run `ollama serve`, "
+            "check OLLAMA_HOST points to the local server, then retry the command."
         ) from None
 
     def post(self, endpoint, payload):
-        request = Request(self.host + endpoint, data=json.dumps(payload).encode(),
-                          headers={'Content-Type': 'application/json'}, method='POST')
+        request = Request(
+            self.host + endpoint,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         last_http_status, last_request_id = None, None
         for attempt in range(self.retries + 1):
             try:
                 with self.opener.open(request, timeout=self.timeout) as response:
                     data = json.load(response)
-                if not isinstance(data, dict) or data.get('error'):
-                    raise OllamaError('Ollama returned an invalid response.')
+                if not isinstance(data, dict) or data.get("error"):
+                    raise OllamaError("Ollama returned an invalid response.")
                 return data
             except HTTPError as error:
                 last_http_status = error.code
-                last_request_id = error.headers.get("x-request-id") if error.headers else None
+                last_request_id = (
+                    error.headers.get("x-request-id") if error.headers else None
+                )
                 if error.code not in {408, 429, 500, 502, 503, 504}:
-                    raise OllamaError(f'Ollama HTTP error {error.code}.', http_status=error.code, request_id=last_request_id) from None
+                    raise OllamaError(
+                        f"Ollama HTTP error {error.code}.",
+                        http_status=error.code,
+                        request_id=last_request_id,
+                    ) from None
             except (URLError, TimeoutError, ConnectionError):
                 last_http_status = None
             except (ValueError, UnicodeError):
-                raise OllamaError('Ollama returned invalid JSON.') from None
+                raise OllamaError("Ollama returned invalid JSON.") from None
             if attempt < self.retries:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
         if last_http_status is not None:
-            raise OllamaError(f'Ollama HTTP error {last_http_status} after retries.', http_status=last_http_status, request_id=last_request_id) from None
-        raise OllamaError('Ollama unavailable after retries.') from None
+            raise OllamaError(
+                f"Ollama HTTP error {last_http_status} after retries.",
+                http_status=last_http_status,
+                request_id=last_request_id,
+            ) from None
+        raise OllamaError("Ollama unavailable after retries.") from None
 
 
 class OllamaUnavailableError(OllamaError):
@@ -87,72 +116,90 @@ class OllamaUnavailableError(OllamaError):
 
 # Exception bodies can contain source excerpts, request payloads or credentials.
 # Preserve only messages generated by Searchify itself, never arbitrary provider text.
-_SAFE_ERROR_MESSAGES = frozenset({
-    'Ollama returned an invalid response.', 'Ollama returned invalid JSON.',
-    'Ollama unavailable after retries.', 'Ollama did not return a complete summary.',
-    'Ollama returned an invalid embedding response.',
-    'Expected 768 finite numeric embedding dimensions.', 'Expected a nonzero embedding vector.',
-    'Summary upsert returned no record.', 'Embedding upsert returned no record.',
-    'File not found in Supabase after upsert.',
-    'Summary reproduced original file contents.', 'Summary may contain sensitive source text.',
-    'Only derived summary text and provenance may be persisted.',
-    'No extracted content to summarize.',
-})
+_SAFE_ERROR_MESSAGES = frozenset(
+    {
+        "Ollama returned an invalid response.",
+        "Ollama returned invalid JSON.",
+        "Ollama unavailable after retries.",
+        "Ollama did not return a complete summary.",
+        "Ollama returned an invalid embedding response.",
+        "Expected 768 finite numeric embedding dimensions.",
+        "Expected a nonzero embedding vector.",
+        "Summary upsert returned no record.",
+        "Embedding upsert returned no record.",
+        "File not found in Supabase after upsert.",
+        "Summary reproduced original file contents.",
+        "Summary may contain sensitive source text.",
+        "Only derived summary text and provenance may be persisted.",
+        "No extracted content to summarize.",
+    }
+)
 _DATABASE_ERRORS = {
-    '23503': 'Foreign key constraint failed.',
-    '23505': 'Unique constraint failed.',
-    '23502': 'Required database field is missing.',
-    '23514': 'Database check constraint failed.',
-    '42501': 'Database permission denied; check authentication and RLS.',
-    '42P01': 'Database table is missing; check migrations.',
-    '42703': 'Database column is missing; check migrations.',
-    'PGRST301': 'Authentication token could not be verified.',
-    'PGRST302': 'Authentication is required.',
-    'PGRST204': 'Database column is missing from the schema cache.',
-    'PGRST205': 'Database table is missing from the schema cache.',
+    "23503": "Foreign key constraint failed.",
+    "23505": "Unique constraint failed.",
+    "23502": "Required database field is missing.",
+    "23514": "Database check constraint failed.",
+    "42501": "Database permission denied; check authentication and RLS.",
+    "42P01": "Database table is missing; check migrations.",
+    "42703": "Database column is missing; check migrations.",
+    "PGRST301": "Authentication token could not be verified.",
+    "PGRST302": "Authentication is required.",
+    "PGRST204": "Database column is missing from the schema cache.",
+    "PGRST205": "Database table is missing from the schema cache.",
 }
 
 
 def format_processing_error(stage, error):
     """Return a bounded diagnostic that never incorporates untrusted error text."""
-    import re
     import errno
-    stage = stage if stage in {'extraction', 'summarization', 'embedding', 'persistence'} else 'persistence'
+    import re
+
+    stage = (
+        stage
+        if stage in {"extraction", "summarization", "embedding", "persistence"}
+        else "persistence"
+    )
     exception_type = type(error).__name__
-    if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]{0,79}', exception_type):
-        exception_type = 'Exception'
-    message = 'Provider error details redacted to protect file contents and credentials.'
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,79}", exception_type):
+        exception_type = "Exception"
+    message = (
+        "Provider error details redacted to protect file contents and credentials."
+    )
     raw = error.args[0] if error.args else None
     if isinstance(raw, str) and raw in _SAFE_ERROR_MESSAGES:
         message = raw
     elif isinstance(error, HTTPError):
         if isinstance(error.code, int) and 100 <= error.code <= 599:
-            message = f'HTTP {error.code}; check provider availability and configuration.'
+            message = (
+                f"HTTP {error.code}; check provider availability and configuration."
+            )
     elif isinstance(error, (TimeoutError, ConnectionError, URLError)):
-        message = 'Provider connection failed or timed out; check the local runtime and network.'
+        message = "Provider connection failed or timed out; check the local runtime and network."
     elif isinstance(error, OSError):
         message = {
-            errno.ENOENT: 'Local file is missing.',
-            errno.EACCES: 'Permission denied reading the local file.',
-            errno.EPERM: 'Permission denied reading the local file.',
-        }.get(error.errno, 'Local file or network I/O failed.')
-    elif isinstance(raw, str) and re.fullmatch(r'Ollama HTTP error [1-5][0-9]{2}( after retries)?\.', raw):
+            errno.ENOENT: "Local file is missing.",
+            errno.EACCES: "Permission denied reading the local file.",
+            errno.EPERM: "Permission denied reading the local file.",
+        }.get(error.errno, "Local file or network I/O failed.")
+    elif isinstance(raw, str) and re.fullmatch(
+        r"Ollama HTTP error [1-5][0-9]{2}( after retries)?\.", raw
+    ):
         message = raw
-    code = getattr(error, 'code', None)
+    code = getattr(error, "code", None)
     if not isinstance(code, str) and isinstance(raw, dict):
-        code = raw.get('code')
+        code = raw.get("code")
     if isinstance(code, str) and code in _DATABASE_ERRORS:
-        message = f'{code}: {_DATABASE_ERRORS[code]}'
-    return f'{stage}: {exception_type}: {message}'
+        message = f"{code}: {_DATABASE_ERRORS[code]}"
+    return f"{stage}: {exception_type}: {message}"
 
 
 def check_processing_runtime(summarizer, embeddings):
     """Check each distinct Ollama client; injected non-Ollama providers may omit it."""
     checked = set()
     for stage, provider in (("summarization", summarizer), ("embedding", embeddings)):
-        client = getattr(provider, 'client', None)
-        key=getattr(client,'host',None)
-        key=key if isinstance(key,str) else id(client)
+        client = getattr(provider, "client", None)
+        key = getattr(client, "host", None)
+        key = key if isinstance(key, str) else id(client)
         if client is not None and key not in checked:
             try:
                 client.check_available()

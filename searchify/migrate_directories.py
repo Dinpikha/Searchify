@@ -1,6 +1,5 @@
-
-from pathlib import Path
 import sqlite3
+from pathlib import Path
 
 from searchify.indexer import DB_PATH
 from searchify.supabase_client import authenticate
@@ -11,9 +10,7 @@ def migrate_directories():
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        directories = conn.execute(
-            "SELECT path FROM directories"
-        ).fetchall()
+        directories = conn.execute("SELECT path FROM directories").fetchall()
 
     payload = []
 
@@ -21,26 +18,27 @@ def migrate_directories():
         local_path = Path(directory["path"]).expanduser().resolve()
 
         # Avoid exposing your Mac username in cloud metadata.
-        display_path = "~/" + str(
-            local_path.relative_to(Path.home())
-        )
+        display_path = "~/" + str(local_path.relative_to(Path.home()))
 
-        payload.append({
-            "owner_id": owner_id,
-            "path": display_path,
-            "name": local_path.name,
-            "enabled": True,
-            "read_only": True,
-        })
+        payload.append(
+            {
+                "owner_id": owner_id,
+                "path": display_path,
+                "name": local_path.name,
+                "enabled": True,
+                "read_only": True,
+            }
+        )
 
     if not payload:
         print("No registered directories found.")
         return
 
-    result = client.table("directories").upsert(
-        payload,
-        on_conflict="owner_id,path"
-    ).execute()
+    result = (
+        client.table("directories")
+        .upsert(payload, on_conflict="owner_id,path")
+        .execute()
+    )
 
     print(f"Directories synced: {len(result.data)}")
 

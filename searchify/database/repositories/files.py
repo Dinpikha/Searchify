@@ -1,4 +1,3 @@
-
 from searchify.database.supabase_client import (
     get_client,
     get_owner_id,
@@ -6,7 +5,6 @@ from searchify.database.supabase_client import (
 
 
 class FileRepository:
-
     def __init__(self):
         self.client = get_client()
         self.owner_id = get_owner_id()

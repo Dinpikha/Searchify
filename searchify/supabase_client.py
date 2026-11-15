@@ -1,16 +1,17 @@
-
 import hashlib
 import json
+from getpass import getpass
+
 import keyring
 
-from getpass import getpass
-from supabase import create_client, Client
-
 from searchify.config.settings import settings
-
 from searchify.services.session_service import (
-    KEYRING_SERVICE, canonical_target, decode_session, session_account,
+    KEYRING_SERVICE,
+    canonical_target,
+    decode_session,
+    session_account,
 )
+from supabase import Client, create_client
 
 SERVICE = KEYRING_SERVICE
 # Unscoped legacy sessions cannot be safely attributed and remain untouched.
@@ -26,15 +27,24 @@ def _configuration(supabase_url=None, supabase_key=None):
 
 
 def save_session(session, supabase_url=None):
-    target = canonical_target(settings.SUPABASE_URL if supabase_url is None else supabase_url)
-    stored = json.dumps({"target": target, "access_token": session.access_token,
-                         "refresh_token": session.refresh_token})
+    target = canonical_target(
+        settings.SUPABASE_URL if supabase_url is None else supabase_url
+    )
+    stored = json.dumps(
+        {
+            "target": target,
+            "access_token": session.access_token,
+            "refresh_token": session.refresh_token,
+        }
+    )
     decode_session(stored, target)
     keyring.set_password(SERVICE, session_account(target), stored)
 
 
 def clear_session(supabase_url=None):
-    target = canonical_target(settings.SUPABASE_URL if supabase_url is None else supabase_url)
+    target = canonical_target(
+        settings.SUPABASE_URL if supabase_url is None else supabase_url
+    )
     try:
         keyring.delete_password(SERVICE, session_account(target))
     except keyring.errors.PasswordDeleteError:
@@ -57,8 +67,7 @@ def authenticate(supabase_url=None, supabase_key=None):
             tokens = decode_session(stored, target)
 
             response = client.auth.set_session(
-                tokens["access_token"],
-                tokens["refresh_token"]
+                tokens["access_token"], tokens["refresh_token"]
             )
 
             session = response.session
@@ -67,18 +76,17 @@ def authenticate(supabase_url=None, supabase_key=None):
                 save_session(session, target)
                 return client, response.user.id
 
-        except Exception:
-            print("Session restoration failed. Cached credentials were not displayed; sign in again.")
+        except Exception:  # noqa: BLE001 - session restoration failure is non-fatal
+            print(
+                "Session restoration failed. Cached credentials were not displayed; sign in again."
+            )
 
         clear_session(target)
 
     email = input("Supabase email: ").strip()
     password = getpass("Supabase password: ")
 
-    response = client.auth.sign_in_with_password({
-        "email": email,
-        "password": password
-    })
+    response = client.auth.sign_in_with_password({"email": email, "password": password})
 
     if not response.session or not response.user:
         raise RuntimeError("Authentication failed.")
@@ -114,7 +122,7 @@ def logout():
     if cached is not None:
         try:
             cached[0].auth.sign_out()
-        except Exception:
+        except Exception:  # noqa: BLE001,S110 - sign-out failure is non-fatal
             pass
     clear_session(target)
     print("Logged out successfully.")

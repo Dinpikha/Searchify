@@ -1,4 +1,3 @@
-
 from datetime import datetime, timezone
 
 from searchify.database.supabase_client import (
@@ -8,7 +7,6 @@ from searchify.database.supabase_client import (
 
 
 class QueryRepository:
-
     def __init__(self):
         self.client = get_client()
         self.owner_id = get_owner_id()
@@ -34,11 +32,7 @@ class QueryRepository:
 
             payload["query_embedding"] = query_embedding
 
-        response = (
-            self.client.table("query_history")
-            .insert(payload)
-            .execute()
-        )
+        response = self.client.table("query_history").insert(payload).execute()
 
         if not response.data:
             raise RuntimeError("Failed to save query.")
@@ -48,9 +42,7 @@ class QueryRepository:
     def get_recent_queries(self, limit=10):
         response = (
             self.client.table("query_history")
-            .select(
-                "id, query_text, normalized_query, created_at"
-            )
+            .select("id, query_text, normalized_query, created_at")
             .eq("owner_id", self.owner_id)
             .gt(
                 "expires_at",
@@ -72,18 +64,20 @@ class QueryRepository:
         payload = []
 
         for position, match in enumerate(matches, start=1):
-            payload.append({
-                "owner_id": self.owner_id,
-                "query_id": query_id,
-                "file_id": match["file_id"],
-                "semantic_score": match.get("semantic_score"),
-                "lexical_score": match.get("lexical_score"),
-                "rrf_score": match.get("rrf_score"),
-                "rerank_score": match.get("rerank_score"),
-                "retrieval_position": position,
-                "selected": False,
-                "matched_at": now,
-            })
+            payload.append(
+                {
+                    "owner_id": self.owner_id,
+                    "query_id": query_id,
+                    "file_id": match["file_id"],
+                    "semantic_score": match.get("semantic_score"),
+                    "lexical_score": match.get("lexical_score"),
+                    "rrf_score": match.get("rrf_score"),
+                    "rerank_score": match.get("rerank_score"),
+                    "retrieval_position": position,
+                    "selected": False,
+                    "matched_at": now,
+                }
+            )
 
         response = (
             self.client.table("query_file_matches")

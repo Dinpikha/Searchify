@@ -1,4 +1,3 @@
-
 from datetime import datetime, timezone
 
 from searchify.database.supabase_client import (
@@ -8,7 +7,6 @@ from searchify.database.supabase_client import (
 
 
 class SummaryRepository:
-
     def __init__(self):
         self.client = get_client()
         self.owner_id = get_owner_id()
@@ -41,12 +39,8 @@ class SummaryRepository:
             "summary_data": summary_data,
             "model_name": model_name,
             "summary_version": version,
-            "generated_at": datetime.now(
-                timezone.utc
-            ).isoformat(),
-            "updated_at": datetime.now(
-                timezone.utc
-            ).isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
         response = (
@@ -67,9 +61,7 @@ class SummaryRepository:
         model_name,
     ):
         if len(embedding) != 768:
-            raise ValueError(
-                f"Expected 768 dimensions, received {len(embedding)}"
-            )
+            raise ValueError(f"Expected 768 dimensions, received {len(embedding)}")
 
         payload = {
             "summary_id": summary_id,

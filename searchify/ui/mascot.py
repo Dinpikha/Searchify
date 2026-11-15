@@ -1,5 +1,5 @@
-
 from pathlib import Path
+
 from rich.console import Console
 
 console = Console()
@@ -15,27 +15,16 @@ def render_mascot():
         console.print("[bold red]Mascot file not found![/bold red]")
         return
 
-    artwork = MASCOT_FILE.read_text(
-        encoding="utf-8",
-        errors="replace"
-    )
+    artwork = MASCOT_FILE.read_text(encoding="utf-8", errors="replace")
 
     # Preserve ANSI colour escape sequences
-    console.print(
-        artwork,
-        markup=False,
-        highlight=False,
-        soft_wrap=True
-    )
+    console.print(artwork, markup=False, highlight=False, soft_wrap=True)
 
 
 def show_banner():
     console.clear()
 
-    console.print(
-        "\n[bold #F5A8CC]♡ SEARCHIFY ♡[/bold #F5A8CC]",
-        justify="center"
-    )
+    console.print("\n[bold #F5A8CC]♡ SEARCHIFY ♡[/bold #F5A8CC]", justify="center")
 
     console.print()
 
@@ -43,12 +32,11 @@ def show_banner():
 
     console.print(
         "\n[bold #BFA5E8]♫ Your personal AI file assistant ♫[/bold #BFA5E8]",
-        justify="center"
+        justify="center",
     )
 
     console.print(
-        "[bold #67E8F9]● LOCAL-FIRST FILE DISCOVERY[/bold #67E8F9]",
-        justify="center"
+        "[bold #67E8F9]● LOCAL-FIRST FILE DISCOVERY[/bold #67E8F9]", justify="center"
     )
 
     console.print()
