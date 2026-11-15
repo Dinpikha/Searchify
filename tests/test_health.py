@@ -30,6 +30,7 @@ class HealthTests(unittest.TestCase):
         self.assertIsNone(snapshot['workspace']['new'])
         self.assertIn('not checked',snapshot['providers']['ollama']['status'])
         self.assertIn('not checked',snapshot['authentication']['status'])
+        self.assertNotIn('Supabase configuration incomplete or invalid',snapshot['errors'])
 
     def test_missing_database_is_not_created(self):
         path=self.base/'missing.db'

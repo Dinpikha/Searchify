@@ -168,7 +168,8 @@ class HealthService:
         errors=['Local metadata database or journal is unavailable; check permissions and integrity before explicit repair.'] if database_error else []
         if not DOTENV_AVAILABLE and (PROJECT_ROOT/'.env').exists(): errors.append('python-dotenv unavailable: project .env was not loaded')
         if not all(deps.values()): errors.append('Missing or incompatible runtime dependencies')
-        if not valid_supabase_url(settings.SUPABASE_URL) or not settings.SUPABASE_KEY: errors.append('Supabase configuration incomplete or invalid')
+        if not offline and (not valid_supabase_url(settings.SUPABASE_URL) or not settings.SUPABASE_KEY):
+            errors.append('Supabase configuration incomplete or invalid')
         if settings.EMBEDDING_DIMENSIONS!=768: errors.append('Embedding dimensions do not match the 768-dimensional schema')
         if invalid: errors.append('Unreadable local reports')
         for name,value in providers.items():
