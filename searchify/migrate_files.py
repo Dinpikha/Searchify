@@ -44,6 +44,17 @@ def migrate_files():
         for d in directories
     }
 
+    existing_hashes = {}
+    offset = 0
+    while True:
+        page = (client.table("files").select("directory_id, relative_path, content_hash")
+                .eq("owner_id", owner_id).order("id").range(offset, offset + 999).execute().data or [])
+        for record in page:
+            existing_hashes[(record["directory_id"], record["relative_path"])] = record["content_hash"]
+        if len(page) < 1000:
+            break
+        offset += len(page)
+
     payload = []
 
     for file in files:
@@ -67,7 +78,7 @@ def migrate_files():
             tz=timezone.utc
         ).isoformat()
 
-        payload.append({
+        record = {
             "owner_id": owner_id,
             "directory_id": remote_directory_id,
             "relative_path": relative_path,
@@ -80,17 +91,22 @@ def migrate_files():
             "modified_ns": file["mtime_ns"],
             "content_hash": file["sha256"],
             "status": "metadata_only",
-        })
+        }
+        if existing_hashes.get((remote_directory_id, relative_path)) != file["sha256"]:
+            record.update(summary_status="pending", summary_error=None, summary_updated_at=None)
+        payload.append(record)
 
-    for start in range(0, len(payload), 100):
-        batch = payload[start:start + 100]
-
-        client.table("files").upsert(
-            batch,
-            on_conflict="directory_id,relative_path"
-        ).execute()
-
-        print(f"Synced {min(start + 100, len(payload))}/{len(payload)}")
+    synced = 0
+    # Keep payload column sets identical; unchanged records must not reset status.
+    for changed in (True, False):
+        records = [record for record in payload if ("summary_status" in record) == changed]
+        for start in range(0, len(records), 100):
+            batch = records[start:start + 100]
+            client.table("files").upsert(
+                batch, on_conflict="directory_id,relative_path"
+            ).execute()
+            synced += len(batch)
+            print(f"Synced {synced}/{len(payload)}")
 
     print(f"Finished. File records synced: {len(payload)}")
 

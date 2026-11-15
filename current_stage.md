@@ -31,3 +31,16 @@
 
 
 searchify reads only - selected files , files stay local instead of storing complete files 
+
+
+
+Working Order : 
+
+
+1. Configuration and environment validation.
+2. Supabase connection and persistent authentication.
+3. File summarization pipeline.
+4. Local embedding generation.
+5. Summary storage and synchronization.
+6. Query understanding and retrieval.
+7. Deep search and reranking.

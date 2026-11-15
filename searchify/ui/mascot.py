@@ -47,7 +47,7 @@ def show_banner():
     )
 
     console.print(
-        "[bold #67E8F9]● LOCAL AI READY[/bold #67E8F9]",
+        "[bold #67E8F9]● LOCAL-FIRST FILE DISCOVERY[/bold #67E8F9]",
         justify="center"
     )
 

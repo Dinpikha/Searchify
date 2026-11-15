@@ -1,4 +1,5 @@
 
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import os
@@ -8,8 +9,10 @@ import re
 import uuid
 from datetime import datetime
 
+from searchify.core.extractor import extract_content, TEXT_EXTENSIONS, MAX_CONTENT_SIZE
+
 DB_DIR = Path.home() / ".searchify"
-DB_PATH = DB_DIR / "searchify.db"
+DB_PATH = Path(os.getenv("SEARCHIFY_DB_PATH", str(DB_DIR / "searchify.db"))).expanduser()
 
 SKIP_DIRS = {
     ".git", ".venv", "venv", "__pycache__",
@@ -18,33 +21,22 @@ SKIP_DIRS = {
     "DerivedData", ".Trash"
 }
 
-TEXT_EXTENSIONS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx",
-    ".html", ".css", ".scss", ".json",
-    ".md", ".txt", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".sql",
-    ".sh", ".zsh", ".bash", ".java",
-    ".c", ".cpp", ".h", ".go", ".rs",
-    ".swift", ".kt", ".xml", ".env",
-    ".log", ".csv"
-}
 
-MAX_CONTENT_SIZE = 2 * 1024 * 1024
+def connect(db_path=None):
+    path = Path(db_path or DB_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-
-def connect():
-    DB_DIR.mkdir(parents=True, exist_ok=True)
-
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA secure_delete=ON")
 
     return conn
 
 
-def initialize():
-    with connect() as conn:
+def initialize(db_path=None):
+    with closing(connect(db_path)) as conn, conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS directories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,14 +65,27 @@ def initialize():
             CREATE INDEX IF NOT EXISTS idx_files_extension
             ON files(extension);
 
-            CREATE VIRTUAL TABLE IF NOT EXISTS file_search
-            USING fts5(
-                path UNINDEXED,
-                name,
-                content,
-                tokenize='unicode61'
-            );
         """)
+
+    purge_legacy_content(db_path or DB_PATH)
+
+
+def purge_legacy_content(db_path):
+    """Remove the old source cache before indexing or summarizing existing data."""
+    path = Path(db_path).resolve()
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as conn:
+        legacy = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_search'"
+        ).fetchone()
+    if legacy:
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute('PRAGMA secure_delete=ON')
+            conn.execute('DROP TABLE file_search')
+            conn.commit()
+            conn.execute('VACUUM')
+            conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 
 
 def register_directory(directory):
@@ -101,26 +106,48 @@ def register_directory(directory):
     print(f"Registered: {path}")
 
 
-def extract_content(path):
-    if path.suffix.lower() not in TEXT_EXTENSIONS:
-        return ""
-
-    if path.stat().st_size > MAX_CONTENT_SIZE:
-        return ""
-
-    try:
-        return path.read_text(
-            encoding="utf-8",
-            errors="replace"
-        )
-    except (OSError, UnicodeError):
-        return ""
-
-
 def calculate_hash(content):
     return hashlib.sha256(
         content.encode("utf-8")
     ).hexdigest()
+
+
+class LocalContentError(ValueError):
+    """A registered local file cannot be resolved or validated."""
+
+
+def resolve_indexed_file(db_path, directory_path, relative_path, expected_hash):
+    """Resolve only registered local metadata; do not read file contents."""
+    root = Path(directory_path).expanduser().resolve()
+    relative=Path(relative_path)
+    candidate=root/relative
+    if relative.is_absolute() or '..' in relative.parts or any((root.joinpath(*relative.parts[:i+1])).is_symlink() for i in range(len(relative.parts))):
+        raise LocalContentError('Invalid local file identity.')
+    path = candidate.resolve()
+    if not path.is_relative_to(root) or not expected_hash:
+        raise LocalContentError('Invalid local file identity.')
+    try:
+        with closing(sqlite3.connect(Path(db_path).resolve().as_uri() + '?mode=ro', uri=True)) as conn:
+            row = conn.execute("""
+                SELECT f.sha256, f.root_id FROM files f
+                JOIN directories d ON d.id = f.root_id
+                WHERE f.path = ? AND d.path = ?
+            """, (str(path), str(root))).fetchone()
+        if (row is None or row[0] != expected_hash or not path.is_file()
+                or path.suffix.lower() not in TEXT_EXTENSIONS
+                or path.stat().st_size > MAX_CONTENT_SIZE):
+            raise LocalContentError('Local file is missing, unsupported or stale.')
+    except (sqlite3.Error, OSError):
+        raise LocalContentError('Local index or file is unavailable.') from None
+    from searchify.core.file_registry import FileRegistry
+    from searchify.core.scanner import matches, PROTECTED
+    rules = FileRegistry(db_path).rules(row[1])
+    relative = path.relative_to(root).as_posix()
+    if (not rules.sync_enabled or path.is_symlink() or path.suffix.lower() not in rules.extensions
+            or path.stat().st_size > rules.max_size or not matches(relative, rules.include)
+            or matches(relative, rules.exclude) or matches(path.name, PROTECTED)):
+        raise LocalContentError('Local file is missing, unsupported or stale.')
+    return path
 
 
 def index_directory(conn, root_id, root_path):
@@ -167,17 +194,21 @@ def index_directory(conn, root_id, root_path):
                 extension = path.suffix.lower()
 
                 existing = conn.execute(
-                    "SELECT size, mtime_ns FROM files WHERE path = ?",
+                    "SELECT size, mtime_ns, sha256 FROM files WHERE path = ?",
                     (absolute_path,)
                 ).fetchone()
 
                 scanned += 1
 
-                # Skip unchanged files.
+                # Revalidate the extracted hash, including legacy empty/invalid values.
+                content = extract_content(path)
+                content_hash = calculate_hash(content) if content.strip() else None
+                del content
                 if (
                     existing
                     and existing["size"] == size
                     and existing["mtime_ns"] == mtime_ns
+                    and existing['sha256'] == content_hash
                 ):
                     conn.execute(
                         """
@@ -190,9 +221,6 @@ def index_directory(conn, root_id, root_path):
 
                     unchanged += 1
                     continue
-
-                content = extract_content(path)
-                content_hash = calculate_hash(content)
 
                 conn.execute(
                     """
@@ -226,20 +254,6 @@ def index_directory(conn, root_id, root_path):
                     )
                 )
 
-                # Refresh the full-text search entry.
-                conn.execute(
-                    "DELETE FROM file_search WHERE path = ?",
-                    (absolute_path,)
-                )
-
-                conn.execute(
-                    """
-                    INSERT INTO file_search(path, name, content)
-                    VALUES (?, ?, ?)
-                    """,
-                    (absolute_path, filename, content)
-                )
-
                 updated += 1
 
             except (OSError, PermissionError) as error:
@@ -257,11 +271,6 @@ def index_directory(conn, root_id, root_path):
         ).fetchall()
 
         for file in stale_files:
-            conn.execute(
-                "DELETE FROM file_search WHERE path = ?",
-                (file["path"],)
-            )
-
             conn.execute(
                 "DELETE FROM files WHERE path = ?",
                 (file["path"],)
@@ -282,84 +291,62 @@ def index_directory(conn, root_id, root_path):
 
 
 def index_all():
-    initialize()
-
-    with connect() as conn:
-        directories = conn.execute(
-            "SELECT id, path FROM directories"
-        ).fetchall()
-
-        if not directories:
-            print("No directories registered yet.")
+    """Refresh metadata using the same directory-specific scanner as sync."""
+    from searchify.core.file_registry import FileRegistry
+    from searchify.core.scanner import Scanner
+    registry = FileRegistry(DB_PATH)
+    with registry.lock():
+        registry.initialize()
+        if not registry.directories():
+            print('No directories registered yet.')
             return
-
-        for directory in directories:
-            root = Path(directory["path"])
-
-            if root.exists():
-                index_directory(
-                    conn,
-                    directory["id"],
-                    root
-                )
-            else:
-                print(f"Directory unavailable: {root}")
+        previous = registry.states()
+        entries, metrics, _ = Scanner(registry).scan()
+        registry.refresh(entries)
+        for entry in entries:
+            if entry.get('synthetic'):
+                continue
+            old = previous.get(entry['path'], {})
+            status = ('unavailable' if entry['change']=='deleted' else 'skipped' if not entry['eligible'] else
+                      'pending' if entry['change']!='unchanged' else old.get('status','pending'))
+            registry.save_state(entry, status, error=old.get('error') if entry['change']=='unchanged' else None)
+        print('Metadata refreshed: ' + ', '.join(f'{key}: {value}' for key,value in metrics.items()))
 
 
 def search_files(query, limit=10):
-    initialize()
-
+    """Search indexed names without initializing data or reading original contents."""
     terms = re.findall(r"[\w+-]+", query)
-
     if not terms:
-        print("Please provide a searchable query.")
+        print('Please provide a searchable query.')
         return
-
-    # Safely construct an FTS query.
-    fts_query = " OR ".join(
-        '"' + term.replace('"', '""') + '"'
-        for term in terms
-    )
-
-    with connect() as conn:
-        try:
-            results = conn.execute(
-                """
-                SELECT
-                    files.path,
-                    files.name,
-                    files.extension,
-                    files.size,
-                    bm25(file_search) AS score
-
-                FROM file_search
-
-                JOIN files ON files.path = file_search.path
-
-                WHERE file_search MATCH ?
-
-                ORDER BY score
-
-                LIMIT ?
-                """,
-                (fts_query, limit)
-            ).fetchall()
-
-        except sqlite3.OperationalError as error:
-            print(f"Search error: {error}")
-            return
-
+    if not Path(DB_PATH).is_file():
+        print('No local index yet. Register a directory and run index or sync explicitly.')
+        return
+    from searchify.core.file_registry import FileRegistry
+    from searchify.core.scanner import matches, PROTECTED, PROTECTED_DIRS
+    registry=FileRegistry(DB_PATH)
+    rules={row['id']:registry.rules(row['id']) for row in registry.directories()}
+    results=[]
+    with registry.connection() as conn:
+        cursor=conn.execute(
+            'SELECT f.path,f.name,f.extension,f.size,f.root_id,d.path AS root_path FROM files f '
+            'JOIN directories d ON d.id=f.root_id WHERE '+
+            ' OR '.join('instr(lower(f.name),lower(?))>0' for _ in terms)+' ORDER BY f.name',terms)
+        for row in cursor:
+            path=Path(row['path']); root=Path(row['root_path'])
+            if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root.resolve()): continue
+            relative=path.relative_to(root).as_posix(); rule=rules[row['root_id']]
+            if (not matches(relative,rule.include) or matches(relative,rule.exclude) or matches(path.name,PROTECTED)
+                    or any(part in PROTECTED_DIRS for part in path.relative_to(root).parts)): continue
+            results.append(dict(row))
+            if len(results)>=limit: break
     if not results:
-        print("No matching files found.")
+        print('No matching available files found.')
         return
-
-    print(f"\nFound {len(results)} matches:\n")
-
-    for index, result in enumerate(results, 1):
-        print(f"{index}. {result['name']}")
-        print(f"   {result['path']}")
-        print(f"   Type: {result['extension'] or 'No extension'}")
-        print()
+    print(f'Found {len(results)} matches:')
+    for position,row in enumerate(results,1):
+        from searchify.cli.output import literal
+        print(f"{position}. {literal(row['name'])}\n   {literal(row['path'])}")
 
 
 def show_status():
