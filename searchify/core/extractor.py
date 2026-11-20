@@ -24,42 +24,42 @@ from pathlib import Path
 # Extensions cover common source code, markup, config, and documentation formats.
 TEXT_EXTENSIONS = frozenset(
     {
-        ".py",      # Python
-        ".js",      # JavaScript
-        ".jsx",     # React JavaScript
-        ".ts",      # TypeScript
-        ".tsx",     # React TypeScript
-        ".html",    # HTML
-        ".css",     # CSS
-        ".scss",    # SCSS
-        ".json",    # JSON
-        ".md",      # Markdown
-        ".txt",     # Plain text
-        ".yaml",    # YAML
-        ".yml",     # YAML (alternative)
-        ".toml",    # TOML
-        ".ini",     # INI config
-        ".cfg",     # Config files
-        ".sql",     # SQL
-        ".sh",      # Shell scripts
-        ".zsh",     # Zsh scripts
-        ".bash",    # Bash scripts
-        ".java",    # Java
-        ".c",       # C
-        ".cpp",     # C++
-        ".h",       # C/C++ headers
-        ".go",      # Go
-        ".rs",      # Rust
-        ".swift",   # Swift
-        ".kt",      # Kotlin
-        ".kts",     # Kotlin script
+        ".py",  # Python
+        ".js",  # JavaScript
+        ".jsx",  # React JavaScript
+        ".ts",  # TypeScript
+        ".tsx",  # React TypeScript
+        ".html",  # HTML
+        ".css",  # CSS
+        ".scss",  # SCSS
+        ".json",  # JSON
+        ".md",  # Markdown
+        ".txt",  # Plain text
+        ".yaml",  # YAML
+        ".yml",  # YAML (alternative)
+        ".toml",  # TOML
+        ".ini",  # INI config
+        ".cfg",  # Config files
+        ".sql",  # SQL
+        ".sh",  # Shell scripts
+        ".zsh",  # Zsh scripts
+        ".bash",  # Bash scripts
+        ".java",  # Java
+        ".c",  # C
+        ".cpp",  # C++
+        ".h",  # C/C++ headers
+        ".go",  # Go
+        ".rs",  # Rust
+        ".swift",  # Swift
+        ".kt",  # Kotlin
+        ".kts",  # Kotlin script
         ".gradle",  # Gradle build files
         ".properties",  # Java properties
-        ".pro",     # Qt project / Prolog
-        ".rst",     # reStructuredText
-        ".xml",     # XML
-        ".log",     # Log files
-        ".csv",     # CSV
+        ".pro",  # Qt project / Prolog
+        ".rst",  # reStructuredText
+        ".xml",  # XML
+        ".log",  # Log files
+        ".csv",  # CSV
     }
 )
 

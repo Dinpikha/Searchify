@@ -37,16 +37,16 @@ PROTECTED_DIRS = {".git", ".aws", ".ssh", ".gnupg", ".kube", ".secrets", ".searc
 # File name patterns for sensitive files that should never be indexed or processed.
 # These patterns use glob-style matching and cover common credential/key files.
 PROTECTED = (
-    ".env",                 # Environment files
-    ".env.*",               # Environment file variants
-    "*.jks",                # Java keystores
-    "*.keystore",           # Keystore files
-    "*.pem",                # PEM certificates/keys
-    "*.key",                # Key files
-    "*credentials*",        # Credential files
+    ".env",  # Environment files
+    ".env.*",  # Environment file variants
+    "*.jks",  # Java keystores
+    "*.keystore",  # Keystore files
+    "*.pem",  # PEM certificates/keys
+    "*.key",  # Key files
+    "*credentials*",  # Credential files
     "*service-account*.json",  # Service account keys
-    "google-services.json", # Firebase/Google services config
-    "local.properties",     # Android local properties (often contains SDK paths)
+    "google-services.json",  # Firebase/Google services config
+    "local.properties",  # Android local properties (often contains SDK paths)
 )
 
 
@@ -65,6 +65,7 @@ class DirectoryRules:
     Rules are stored in the local SQLite database and can be configured
     via the `searchify dirs configure` CLI command.
     """
+
     # Include patterns (glob-style, relative to directory root)
     # Default: ["*"] (all files)
     include: list = field(default_factory=lambda: ["*"])

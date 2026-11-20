@@ -29,24 +29,24 @@ from searchify.supabase_client import authenticate
 
 # Extensions considered as source code files
 CODE_EXTENSIONS = {
-    ".py",      # Python
-    ".js",      # JavaScript
-    ".jsx",     # React JavaScript
-    ".ts",      # TypeScript
-    ".tsx",     # React TypeScript
-    ".java",    # Java
-    ".c",       # C
-    ".cpp",     # C++
-    ".h",       # C/C++ headers
-    ".go",      # Go
-    ".rs",      # Rust
-    ".swift",   # Swift
-    ".kt",      # Kotlin
-    ".sh",      # Shell
-    ".zsh",     # Zsh
-    ".sql",     # SQL
-    ".html",    # HTML
-    ".css",     # CSS
+    ".py",  # Python
+    ".js",  # JavaScript
+    ".jsx",  # React JavaScript
+    ".ts",  # TypeScript
+    ".tsx",  # React TypeScript
+    ".java",  # Java
+    ".c",  # C
+    ".cpp",  # C++
+    ".h",  # C/C++ headers
+    ".go",  # Go
+    ".rs",  # Rust
+    ".swift",  # Swift
+    ".kt",  # Kotlin
+    ".sh",  # Shell
+    ".zsh",  # Zsh
+    ".sql",  # SQL
+    ".html",  # HTML
+    ".css",  # CSS
 }
 
 
