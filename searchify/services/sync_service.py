@@ -47,7 +47,6 @@ logger = logging.getLogger(__name__)
 
 class SyncError(RuntimeError):
     """General synchronization error."""
-    pass
 
 
 def _notify(callback, value, event):

@@ -49,7 +49,6 @@ class StaleContentError(RuntimeError):
     distinct from permanent failures. Processing should be retried after
     re-scanning.
     """
-    pass
 
 
 class SummaryService:

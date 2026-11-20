@@ -213,7 +213,6 @@ class OllamaUnavailableError(OllamaError):
     This is distinct from transient errors during processing - it indicates
     Ollama is not running or not accessible at the configured host.
     """
-    pass
 
 
 # Exception bodies can contain source excerpts, request payloads or credentials.

@@ -36,7 +36,6 @@ def timestamp():
 
 class RegistryBusy(RuntimeError):
     """Raised when another process holds the workspace lock."""
-    pass
 
 
 class FileRegistry:
