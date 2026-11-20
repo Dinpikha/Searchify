@@ -4,6 +4,8 @@
 
 ![Searchify Mascot](searchify/ui/searchify_mascot.png)
 
+**New to the codebase?** If you're a developer looking to understand the repository, start with the [Developer Guide](docs/DEVELOPER_GUIDE.md) for a guided tour of the architecture, source files, and execution flows.
+
 ### **♫ Your Personal AI File Assistant ♫**
 ### **● LOCAL-FIRST FILE DISCOVERY**
 
