@@ -1,3 +1,7 @@
+# Python packaging contract: setuptools discovers the searchify namespace,
+# installs runtime integrations, and exposes cli.app through __main__.
+# Only terminal ANSI artwork is included as UI package data.
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"

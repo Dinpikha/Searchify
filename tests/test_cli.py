@@ -1,3 +1,8 @@
+# Exercises cli.app dispatch and workspace presentation with captured output and patched
+# dependencies.
+# Help/startup/status assertions guard against accidental indexing, authentication, or
+# processing.
+
 """Unified command discovery and side-effect-free startup."""
 from contextlib import closing, redirect_stdout, redirect_stderr
 import io

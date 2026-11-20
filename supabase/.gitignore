@@ -1,3 +1,5 @@
+# Exclude local Supabase branch/runtime state and dotenv key material.
+
 # Supabase
 .branches
 .temp

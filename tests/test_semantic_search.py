@@ -1,3 +1,7 @@
+# Exercises query embeddings, result validation, and the summary RPC adapter through
+# injected fakes.
+# Assertions preserve summary-only retrieval without opening indexed source files.
+
 """Semantic search tests run without Ollama, file reads or a Supabase account."""
 import importlib
 import sys

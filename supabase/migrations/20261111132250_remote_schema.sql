@@ -1,7 +1,14 @@
+-- Initial remote schema: owner-scoped directory/file metadata, historical chunk
+-- storage, vectors, and job records. Python repositories use Supabase/PostgREST;
+-- the current summary pipeline deliberately leaves file_chunks/file_embeddings empty.
+-- Composite foreign keys bind each child to its parent owner; RLS additionally
+-- restricts authenticated reads and writes to auth.uid().
+
 SET local check_function_bodies = off;
 
 CREATE EXTENSION "vector" SCHEMA "extensions";
 
+-- Registered remote roots: owner/path is unique; enabled controls search eligibility.
 CREATE TABLE "public"."directories" (
   "id"           uuid                     NOT NULL DEFAULT gen_random_uuid(),
   "owner_id"     uuid                     NOT NULL,
@@ -20,6 +27,7 @@ CREATE TABLE "public"."directories" (
 ALTER TABLE "public"."directories"
   ENABLE ROW LEVEL SECURITY;
 
+-- Historical source-chunk schema, unused by the current summary-only persistence path.
 CREATE TABLE "public"."file_chunks" (
   "id"            uuid                     NOT NULL DEFAULT gen_random_uuid(),
   "owner_id"      uuid                     NOT NULL,
@@ -40,6 +48,7 @@ CREATE TABLE "public"."file_chunks" (
 ALTER TABLE "public"."file_chunks"
   ENABLE ROW LEVEL SECURITY;
 
+-- Historical per-chunk vectors, distinct from the later file_summary_embeddings table.
 CREATE TABLE "public"."file_embeddings" (
   "chunk_id"   uuid                     NOT NULL,
   "owner_id"   uuid                     NOT NULL,
@@ -52,6 +61,7 @@ CREATE TABLE "public"."file_embeddings" (
 ALTER TABLE "public"."file_embeddings"
   ENABLE ROW LEVEL SECURITY;
 
+-- Remote metadata keyed by directory/relative path; status describes file availability.
 CREATE TABLE "public"."files" (
   "id"              uuid                     NOT NULL DEFAULT gen_random_uuid(),
   "owner_id"        uuid                     NOT NULL,
@@ -81,6 +91,7 @@ CREATE TABLE "public"."files" (
 ALTER TABLE "public"."files"
   ENABLE ROW LEVEL SECURITY;
 
+-- Persisted job counters/status; current sync reports are also written locally as JSON.
 CREATE TABLE "public"."index_jobs" (
   "id"               uuid                     NOT NULL DEFAULT gen_random_uuid(),
   "owner_id"         uuid                     NOT NULL,
@@ -100,6 +111,8 @@ CREATE TABLE "public"."index_jobs" (
 ALTER TABLE "public"."index_jobs"
   ENABLE ROW LEVEL SECURITY;
 
+-- Cascades remove dependent metadata when an owner/root disappears. Including
+-- owner_id in parent references prevents linking children across user accounts.
 ALTER TABLE "public"."directories"
   ADD CONSTRAINT "directories_owner_id_fkey" FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 
@@ -127,6 +140,8 @@ ALTER TABLE "public"."index_jobs"
 ALTER TABLE "public"."index_jobs"
   ADD CONSTRAINT "index_jobs_owner_id_fkey" FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 
+-- B-tree indexes support metadata lookups; GIN supports historical text search;
+-- HNSW supports approximate nearest-neighbor vector queries with cosine distance.
 CREATE INDEX idx_chunks_file ON public.file_chunks USING btree (file_id);
 
 CREATE INDEX idx_chunks_search ON public.file_chunks USING gin (search_vector);
@@ -143,6 +158,7 @@ CREATE INDEX idx_files_status ON public.files USING btree (status);
 
 CREATE INDEX idx_jobs_owner_status ON public.index_jobs USING btree (owner_id, status);
 
+-- USING limits existing rows; WITH CHECK enforces ownership on inserted/updated rows.
 CREATE POLICY "Users manage own directories" ON "public"."directories"
   FOR ALL
   TO "authenticated"

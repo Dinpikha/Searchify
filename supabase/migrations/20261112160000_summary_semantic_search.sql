@@ -1,3 +1,10 @@
+-- Supabase RPC exposed as POST /rest/v1/rpc/match_file_summaries.
+-- Requires an authenticated JWT; request fields are query_embedding (768 values),
+-- match_count (1..1000, default 10), and embedding_model (default below).
+-- Returns ranked file/summary identifiers, derived summary, path metadata, and
+-- cosine similarity. Invalid arguments raise 22023; missing identity raises 42501.
+-- Called by repositories.summaries through retrieval.SemanticSearch.
+
 -- Query derived summaries only. Original source text is neither read nor stored.
 CREATE OR REPLACE FUNCTION public.match_file_summaries(
     query_embedding extensions.vector(768),
@@ -26,6 +33,7 @@ BEGIN
     IF match_count IS NULL OR match_count < 1 OR match_count > 1000 THEN
         RAISE EXCEPTION 'match_count must be between 1 and 1000' USING ERRCODE = '22023';
     END IF;
+    -- A zero vector has no cosine direction; reject it before distance ranking.
     IF query_embedding IS NULL OR extensions.vector_dims(query_embedding) <> 768
        OR (query_embedding OPERATOR(extensions.<#>) query_embedding) = 0 THEN
         RAISE EXCEPTION 'Expected a nonzero 768-dimensional query vector' USING ERRCODE = '22023';
@@ -34,6 +42,8 @@ BEGIN
         RAISE EXCEPTION 'Embedding model is required' USING ERRCODE = '22023';
     END IF;
 
+    -- SECURITY INVOKER preserves caller RLS. Match owners across every join,
+    -- reject stale hashes/incomplete work, and compare only compatible models.
     RETURN QUERY
     SELECT f.id, s.id, s.summary, f.directory_id, f.filename, f.relative_path,
            pg_catalog.rtrim(d.path, '/') || '/' || f.relative_path,
@@ -50,11 +60,14 @@ BEGIN
       AND f.content_hash = s.source_content_hash
       AND e.model_name = embedding_model
       AND (e.embedding OPERATOR(extensions.<#>) e.embedding) < 0
+    -- Cosine distance ascending gives similarity descending; file ID breaks ties.
     ORDER BY e.embedding OPERATOR(extensions.<=>) query_embedding, f.id
     LIMIT match_count;
 END;
 $$;
 
+-- Schema/table permissions enable authenticated RPC use; RLS still limits rows.
+-- Anonymous callers receive no execute grant even if table grants exist.
 REVOKE ALL ON FUNCTION public.match_file_summaries(extensions.vector, integer, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.match_file_summaries(extensions.vector, integer, text) TO authenticated;
 GRANT SELECT ON public.file_summary_embeddings, public.file_summaries, public.files, public.directories TO authenticated;

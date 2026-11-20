@@ -1,4 +1,29 @@
-"""Sequential, resumable synchronization of explicitly registered local roots."""
+"""
+Synchronization Service - Main Pipeline Orchestration
+
+This module implements the core synchronization pipeline for Searchify.
+It coordinates the entire process: scanning registered directories, classifying
+files by change status, reconciling with remote Supabase state, and processing
+eligible files through summarization and embedding.
+
+Key features:
+- Incremental sync: Only processes changed/new files (content-hash based)
+- Resumable: Progress persisted after every file; survives interruption
+- Workspace locking: Prevents concurrent sync operations (fcntl lock)
+- Dry-run mode: Preview changes without modifying data or calling AI/cloud
+- Retry logic: Opt-in retry for failed files with permanent/non-permanent distinction
+- Rename detection: Uses content hash to detect file moves without reprocessing
+- Concurrent claim recovery: Handles interrupted processing claims
+
+Pipeline stages:
+1. Scan: Walk registered directories, compute signatures/hashes
+2. Classify: Determine file status (new, modified, unchanged, deleted, skipped)
+3. Prepare: Reconcile with remote state, detect renames, validate existing summaries
+4. Process: Batch process files through summarization -> embedding -> persistence
+5. Report: Generate detailed JSON report with outcomes and metrics
+
+Used by: CLI sync command, standalone processing
+"""
 
 import logging
 from pathlib import Path
@@ -21,10 +46,21 @@ logger = logging.getLogger(__name__)
 
 
 class SyncError(RuntimeError):
+    """General synchronization error."""
     pass
 
 
 def _notify(callback, value, event):
+    """
+    Safely invoke progress callback with error isolation.
+
+    Progress display failures never affect synchronization state.
+
+    Args:
+        callback: Progress callback function (value, event) -> None
+        value: Event-specific value (filename, count, etc.)
+        event: Event name string
+    """
     if callback:
         try:
             callback(value, event)
@@ -35,6 +71,15 @@ def _notify(callback, value, event):
 
 
 def display_path(path):
+    """
+    Format path for display, using ~ for home directory.
+
+    Args:
+        path: File or directory path
+
+    Returns:
+        Display string (e.g., "~/project/file.py" or absolute path)
+    """
     path = Path(path).expanduser().resolve()
     try:
         return "~/" + str(path.relative_to(Path.home()))
@@ -43,6 +88,25 @@ def display_path(path):
 
 
 class SyncService:
+    """
+    Main synchronization service orchestrating the full pipeline.
+
+    The SyncService coordinates scanning, classification, remote reconciliation,
+    and batch processing. It supports dependency injection for testing and
+    flexible configuration via constructor parameters.
+
+    Attributes:
+        batch_size: Number of files to process per batch (default: 5)
+        registry: FileRegistry instance for local metadata
+        db_path: Path to local SQLite database
+        reports_dir: Directory for sync report output
+        files: FileRepository instance (Supabase) - lazy initialized
+        summaries: SummaryRepository instance (Supabase) - lazy initialized
+        summarizer: Summarizer instance - lazy initialized
+        embeddings: Embeddings instance - lazy initialized
+        summary_service: SummaryService instance - lazy initialized
+    """
+
     def __init__(
         self,
         batch_size=5,
@@ -53,14 +117,31 @@ class SyncService:
         embeddings=None,
         reports_dir=None,
     ):
+        """
+        Initialize sync service with configuration.
+
+        Args:
+            batch_size: Files per processing batch (must be positive int)
+            db_path: Local SQLite database path (default: settings.LOCAL_DB_PATH)
+            files: FileRepository instance (for dependency injection)
+            summaries: SummaryRepository instance (for dependency injection)
+            summarizer: Summarizer instance (for dependency injection)
+            embeddings: Embeddings instance (for dependency injection)
+            reports_dir: Directory for sync reports (default: settings.REPORTS_DIR)
+
+        Raises:
+            ValueError: If batch_size is not a positive integer
+        """
         if type(batch_size) is not int or batch_size < 1:
             raise ValueError("Batch size must be positive.")
         self.batch_size = batch_size
         self.registry = FileRegistry(db_path or settings.LOCAL_DB_PATH)
         self.db_path = self.registry.path
         self.reports_dir = Path(reports_dir or settings.REPORTS_DIR)
+        # Dependency injection for repositories and AI providers
         self.files, self.summaries = files, summaries
         self.summarizer, self.embeddings = summarizer, embeddings
+        # Initialize summary_service if all dependencies provided
         self.summary_service = (
             SummaryService(files, summaries, summarizer, embeddings, self.db_path)
             if all(
@@ -72,9 +153,10 @@ class SyncService:
         self.report, self.last_result = SyncReport(), None
         self._queued_files = []
         self._dry_run = False
-        self._views = {}
+        self._views = {}  # Path -> latest outcome mapping for deduplication
 
     def _repositories(self):
+        """Lazy-initialize Supabase repositories if not injected."""
         if self.files is None:
             from searchify.repositories.files import FileRepository
 
@@ -85,6 +167,7 @@ class SyncService:
             self.summaries = SummaryRepository()
 
     def _providers(self):
+        """Lazy-initialize AI providers and summary service if not injected."""
         from searchify.ai.embeddings import Embeddings
         from searchify.ai.summarizer import Summarizer
 
@@ -102,6 +185,22 @@ class SyncService:
             )
 
     def _view(self, entry, outcome, stage=None, error=None, reason=None):
+        """
+        Record an outcome for an entry, deduplicating by path.
+
+        Updates existing view for the same path, or creates new entry
+        in report and views dictionary.
+
+        Args:
+            entry: File entry dict
+            outcome: Outcome string (completed, failed, stale, skipped)
+            stage: Processing stage where outcome occurred
+            error: Error dict if applicable
+            reason: Reason string for skipped/stale outcomes
+
+        Returns:
+            Outcome row dict
+        """
         row = make_outcome(entry, outcome, stage, error, reason)
         key = entry.get("path")
         if key is not None and key in self._views:
@@ -113,6 +212,16 @@ class SyncService:
         return row
 
     def _classify_local(self, entries):
+        """
+        Classify non-eligible entries based on local state.
+
+        Processes entries that are not eligible for AI processing
+        (excluded, protected, errors, deleted, etc.) and records
+        appropriate outcomes without calling remote services.
+
+        Args:
+            entries: List of file entries from scanner
+        """
         states = self.registry.states()
         for entry in entries:
             if entry.get("eligible"):
@@ -157,6 +266,24 @@ class SyncService:
         reason=None,
         remote_id=None,
     ):
+        """
+        Record outcome and persist state to local registry.
+
+        Creates outcome row via _view, then saves state to SQLite
+        registry if not in dry-run mode. For completed files, also
+        records model versions for future validation.
+
+        Args:
+            entry: File entry dict
+            outcome: Outcome string
+            error: Error dict
+            stage: Processing stage
+            reason: Skip/stale reason
+            remote_id: Supabase file ID
+
+        Returns:
+            Outcome row dict
+        """
         row = self._view(
             {**entry, "file_id": remote_id or entry.get("file_id")},
             outcome,
@@ -189,11 +316,31 @@ class SyncService:
         return row
 
     def _valid_remote_summary(self, remote, entry, state):
+        """
+        Validate that a remote summary is current and compatible.
+
+        Checks multiple conditions to determine if an existing remote
+        summary can be reused without regeneration:
+        1. Remote summary_status is "completed"
+        2. Content hash matches local file
+        3. Local state shows completed with matching models/versions
+        4. Remote summary exists with matching content hash, model, version
+        5. Remote embedding exists with matching model and valid vector
+
+        Args:
+            remote: Remote file metadata dict
+            entry: Local file entry dict
+            state: Local sync state dict
+
+        Returns:
+            True if remote summary is valid and reusable, False otherwise
+        """
         if (
             remote.get("summary_status") != "completed"
             or remote.get("content_hash") != entry["content_hash"]
         ):
             return False
+        # Fast path: local state confirms completion with current models
         if (
             state.get("status") == "completed"
             and state.get("content_hash") == entry["content_hash"]
@@ -202,6 +349,7 @@ class SyncService:
             and state.get("summary_version") == settings.SUMMARY_VERSION
         ):
             return True
+        # Slow path: verify against Supabase
         summary = self.summaries.get_summary(remote["id"])
         if (
             not summary
@@ -228,6 +376,26 @@ class SyncService:
         return True
 
     def _prepare(self, entries, retry_failed, retry_permanent=False):
+        """
+        Reconcile local entries with remote state and build processing queue.
+
+        This is the core reconciliation logic. For each registered directory:
+        1. Fetch remote file metadata from Supabase
+        2. Handle nested root conflicts (mark unavailable)
+        3. Detect renames via content hash matching
+        4. Validate existing summaries for reuse
+        4. Classify files for processing, skipping, or retry
+        5. Build metadata updates for Supabase
+        6. Return queue of files needing AI processing
+
+        Args:
+            entries: Local file entries from scanner
+            retry_failed: Whether to retry previously failed files
+            retry_permanent: Whether to retry known non-retryable failures
+
+        Returns:
+            List of file dicts ready for batch processing
+        """
         """One paginated metadata fetch per registered remote directory."""
         remote_dirs = {row["path"]: row for row in self.files.list_directories()}
         states = self.registry.states()
@@ -243,6 +411,7 @@ class SyncService:
                 remote_dir = self.files.ensure_directory(directory["path"])
             rows = self.files.list_files(remote_dir["id"])
             root = Path(directory["path"])
+            # Mark files from nested roots as unavailable in parent
             for row in rows:
                 candidate = (root / row["relative_path"]).resolve()
                 if any(
@@ -535,6 +704,20 @@ class SyncService:
         return queue
 
     def _process_batch(self, file_batch, progress_callback=None):
+        """
+        Process a batch of files through summarization and embedding.
+
+        Initializes AI providers, checks runtime availability, then
+        processes each file through SummaryService. Updates progress
+        callback and tracks outcome counts.
+
+        Args:
+            file_batch: List of file dicts to process
+            progress_callback: Optional progress callback
+
+        Returns:
+            Dict with counts for each outcome type
+        """
         self._providers()
         if file_batch:
             check_processing_runtime(self.summarizer, self.embeddings)
@@ -562,6 +745,34 @@ class SyncService:
         dry_run=False,
         retry_permanent=False,
     ):
+        """
+        Execute the full synchronization pipeline.
+
+        This is the main entry point. It orchestrates:
+        1. Workspace lock acquisition (unless dry-run)
+        2. Directory scanning
+        3. Dry-run classification (if requested)
+        4. Local metadata refresh
+        5. Local classification of non-eligible files
+        6. Remote reconciliation and queue preparation
+        7. Batch processing through AI pipeline
+        8. Report generation and persistence
+
+        Args:
+            progress_callback: Function(value, event) for progress updates
+            retry_failed: Retry eligible failed files
+            dry_run: Preview only, no modifications
+            retry_permanent: With retry_failed, retry known non-retryable errors
+
+        Returns:
+            Result dict with counts, report, and report_path
+
+        Raises:
+            RegistryBusy: If another sync holds the workspace lock
+            ValueError: If retry_permanent without retry_failed
+            OllamaUnavailableError: If local AI runtime unreachable
+            Exception: Other processing errors (state preserved for recovery)
+        """
         if retry_permanent and not retry_failed:
             raise ValueError("retry_permanent requires retry_failed.")
         self.report, self.last_result = SyncReport(), None

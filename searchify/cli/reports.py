@@ -1,4 +1,26 @@
-"""Display local sync history and sanitized detailed run outcomes."""
+"""
+CLI Reports Module - Display Local Sync History
+
+This module implements the `searchify report` command for viewing
+saved synchronization reports. It loads JSON report files from the
+local reports directory and renders them with sanitized output.
+
+Features:
+- Lists report history with summary counts (--history)
+- Renders latest report with metrics, outcomes, and error details
+- Sanitizes filenames, error messages, and identifiers
+- Groups failures by category and stage for actionable insights
+- Verbose mode shows status persistence errors
+
+Report structure:
+- Metrics: scan statistics (discovered, new, modified, etc.)
+- Counts: outcome tallies (completed, failed, stale, skipped)
+- Outcomes: per-file results with reasons and errors
+- Problem groups: failures grouped by category/stage
+- Run errors: pipeline-level errors
+
+Used by: CLI app.py command dispatcher
+"""
 
 from searchify.cli import workspace
 from searchify.cli.output import line
@@ -13,6 +35,14 @@ from searchify.reporting.sync_report import (
 
 
 def render_report(report, path=None, verbose=False):
+    """
+    Render a synchronization report to console.
+
+    Args:
+        report: Report dict from load_reports()
+        path: Optional report file path for display
+        verbose: Include status persistence errors
+    """
     line(
         "SYNCHRONIZATION REPORT"
         + (" — DRY RUN (no data written)" if report.get("dry_run") else "")
@@ -112,6 +142,15 @@ def render_report(report, path=None, verbose=False):
 
 
 def run(args):
+    """
+    Execute report command.
+
+    Args:
+        args: Parsed arguments (history, verbose flags)
+
+    Returns:
+        Exit code (0=OK, 1=no reports or invalid reports)
+    """
     _, directory = workspace.local_paths()
     reports, invalid = load_reports(directory)
     if invalid:

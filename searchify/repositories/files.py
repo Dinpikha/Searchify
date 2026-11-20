@@ -1,3 +1,23 @@
+"""
+File Repository - Supabase File Metadata Operations
+
+This module provides the high-level repository for file metadata in
+Supabase. It extends the base database repository with operations
+for synchronization pipeline support.
+
+Key features:
+- Owner-scoped queries (RLS via auth.uid())
+- Conditional updates with CAS (Compare-And-Swap) for claim management
+- Processing claim recovery for interrupted workers
+- Directory caching for performance
+- Pagination for large result sets
+- Rename detection via content hash matching
+
+All operations enforce owner isolation through Supabase RLS policies.
+
+Used by: sync_service.py, summary_service.py, processing_claim.py
+"""
+
 from datetime import datetime, timezone
 
 from searchify.config.settings import settings
@@ -5,12 +25,36 @@ from searchify.database.repositories.files import FileRepository as BaseFileRepo
 
 
 class FileRepository(BaseFileRepository):
+    """
+    Extended file repository with sync pipeline support.
+
+    Adds methods for claim recovery, conditional status updates,
+    directory caching, and batch metadata operations.
+    """
+
     def __init__(self, db_path=None):
+        """
+        Initialize with local database path for claim recovery.
+
+        Args:
+            db_path: Local SQLite path (default: settings.LOCAL_DB_PATH)
+        """
         super().__init__()
         self.db_path = db_path or settings.LOCAL_DB_PATH
         self._directory_cache = {}
 
     def get_file(self, file_id):
+        """
+        Get minimal file metadata by ID.
+
+        Selects only fields needed for claim processing to reduce payload.
+
+        Args:
+            file_id: Supabase file UUID
+
+        Returns:
+            File dict or None
+        """
         return (
             self.client.table("files")
             .select("id, content_hash, status, summary_status, summary_updated_at")
@@ -22,7 +66,15 @@ class FileRepository(BaseFileRepository):
         )
 
     def recover_processing(self):
-        """Recover eligible expired or proven-interrupted claims under the workspace lock."""
+        """
+        Recover eligible expired or interrupted processing claims.
+
+        Scans all processing files, validates local eligibility,
+        and attempts claim recovery under workspace lock.
+
+        Returns:
+            List of recovered file dicts with pending status
+        """
         from searchify.core.file_registry import FileRegistry
         from searchify.services.processing_claim import recover_claim
 
@@ -39,7 +91,15 @@ class FileRepository(BaseFileRepository):
         return recovered
 
     def local_entry(self, file):
-        """Resolve registration and current rules without reading source contents."""
+        """
+        Resolve local registration and rules without reading source contents.
+
+        Args:
+            file: Supabase file dict
+
+        Returns:
+            Eligible entry dict or None
+        """
         from searchify.core.file_registry import FileRegistry
         from searchify.services.processing_claim import eligible_entry
 
@@ -52,6 +112,25 @@ class FileRepository(BaseFileRepository):
         include_processing=False,
         retry_permanent=False,
     ):
+        """
+        Fetch files eligible for summary processing with local validation.
+
+        Paginates through Supabase files, then validates each against
+        local registry to ensure:
+        - File exists and matches content hash
+        - Directory rules allow processing
+        - Processing claims are recoverable (if include_processing)
+        - Failed files are retryable (if retry_failed)
+
+        Args:
+            limit: Maximum files to return
+            retry_failed: Include failed files
+            include_processing: Include processing files for recovery
+            retry_permanent: Retry known non-retryable failures
+
+        Returns:
+            List of eligible file dicts
+        """
         if limit <= 0:
             raise ValueError("Limit must be positive.")
         eligible = []
@@ -111,6 +190,15 @@ class FileRepository(BaseFileRepository):
         return eligible
 
     def get_directory(self, directory_id):
+        """
+        Get directory metadata with caching.
+
+        Args:
+            directory_id: Supabase directory UUID
+
+        Returns:
+            Directory dict with path and enabled status
+        """
         cache = getattr(self, "_directory_cache", {})
         if directory_id not in cache:
             cache[directory_id] = (
@@ -134,6 +222,29 @@ class FileRepository(BaseFileRepository):
         expected_status=None,
         expected_updated_at=None,
     ):
+        """
+        Conditionally update summary_status with CAS semantics.
+
+        Builds query with optional filters for:
+        - content_hash match
+        - expected summary_status (CAS)
+        - expected summary_updated_at (CAS for claim renewal)
+        - status in [indexed, metadata_only] for processing transitions
+
+        Args:
+            file_id: Supabase file UUID
+            status: New summary_status
+            error: Error message for failed status
+            content_hash: Expected content hash
+            expected_status: Expected current summary_status
+            expected_updated_at: Expected current summary_updated_at
+
+        Returns:
+            Updated rows
+
+        Raises:
+            ValueError: If status invalid
+        """
         if status not in {"pending", "processing", "completed", "failed"}:
             raise ValueError("Invalid summary status.")
         query = (
@@ -159,7 +270,12 @@ class FileRepository(BaseFileRepository):
         return query.execute().data or []
 
     def get_sync_counts(self):
-        """Return counts of files by summary_status for the current owner."""
+        """
+        Get file counts by summary_status for current owner.
+
+        Returns:
+            Dict with counts for each status plus indexed total
+        """
         counts = {}
         for status in ("pending", "failed", "completed", "processing"):
             result = (
@@ -181,6 +297,17 @@ class FileRepository(BaseFileRepository):
         return counts
 
     def _pages(self, table, columns, **filters):
+        """
+        Paginate through Supabase table with owner_id filter.
+
+        Args:
+            table: Table name
+            columns: Columns to select
+            **filters: Additional equality filters
+
+        Returns:
+            List of all rows
+        """
         rows, offset = [], 0
         while True:
             query = (
@@ -195,9 +322,21 @@ class FileRepository(BaseFileRepository):
             offset += len(page)
 
     def list_directories(self):
+        """
+        List all directories for current owner with pagination.
+
+        Returns:
+            List of directory dicts (id, path, enabled)
+        """
         return self._pages("directories", "id, path, enabled")
 
     def list_files(self, directory_id):
+        """
+        List all files in a directory with pagination.
+
+        Returns:
+            List of file dicts with full metadata
+        """
         return self._pages(
             "files",
             "id, directory_id, relative_path, filename, extension, size_bytes, modified_ns, content_hash, status, summary_status, summary_error, summary_updated_at",
@@ -205,6 +344,20 @@ class FileRepository(BaseFileRepository):
         )
 
     def ensure_directory(self, path):
+        """
+        Ensure directory exists in Supabase, creating if needed.
+
+        Converts absolute path to display format (~/project) for storage.
+
+        Args:
+            path: Absolute directory path
+
+        Returns:
+            Directory record dict
+
+        Raises:
+            RuntimeError: If persistence returns no record
+        """
         from pathlib import Path
 
         root = Path(path).expanduser().resolve()
@@ -227,6 +380,20 @@ class FileRepository(BaseFileRepository):
         return rows[0]
 
     def upsert_metadata(self, records):
+        """
+        Batch upsert file metadata with conditional updates.
+
+        For records with _expected (existing), uses conditional update
+        with CAS on id, content_hash, summary_status, summary_updated_at.
+        For new records, uses upsert with ignore_duplicates to avoid
+        racing with concurrent claim acquisition.
+
+        Args:
+            records: List of file metadata dicts
+
+        Returns:
+            List of upserted records
+        """
         output = []
         inserts = []
         for record in records:
@@ -264,6 +431,17 @@ class FileRepository(BaseFileRepository):
         return output
 
     def mark_unavailable(self, file_id):
+        """
+        Mark file as unavailable (local file missing).
+
+        Updates status to error with error messages.
+
+        Args:
+            file_id: Supabase file UUID
+
+        Returns:
+            Updated rows
+        """
         return (
             self.client.table("files")
             .update(
@@ -283,6 +461,22 @@ class FileRepository(BaseFileRepository):
     def move_metadata(
         self, file_id, relative_path, filename, size_bytes, modified_ns, content_hash
     ):
+        """
+        Move file metadata (rename detection) with content hash CAS.
+
+        Only succeeds if content_hash matches and summary_status != processing.
+
+        Args:
+            file_id: Supabase file UUID
+            relative_path: New relative path
+            filename: New filename
+            size_bytes: New size
+            modified_ns: New mtime nanoseconds
+            content_hash: Expected content hash
+
+        Returns:
+            Updated rows (empty if CAS failed)
+        """
         from pathlib import Path
 
         return (
@@ -306,6 +500,16 @@ class FileRepository(BaseFileRepository):
         )
 
     def mark_skipped(self, file_id, reason):
+        """
+        Mark file as intentionally skipped.
+
+        Args:
+            file_id: Supabase file UUID
+            reason: Skip reason
+
+        Returns:
+            Updated rows
+        """
         return (
             self.client.table("files")
             .update(
@@ -322,6 +526,20 @@ class FileRepository(BaseFileRepository):
         )
 
     def restore_available(self, file_id, content_hash, previous_status):
+        """
+        Restore file availability after incorrect unavailability.
+
+        Only succeeds if content_hash matches, previous_status matches,
+        and summary_status is completed.
+
+        Args:
+            file_id: Supabase file UUID
+            content_hash: Expected content hash
+            previous_status: Expected previous status
+
+        Returns:
+            Updated rows
+        """
         return (
             self.client.table("files")
             .update({"status": "indexed", "summary_error": None, "error_message": None})

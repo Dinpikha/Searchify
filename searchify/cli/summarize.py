@@ -1,8 +1,54 @@
+"""
+CLI Summarize Module - Process Pending Summaries
+
+This module implements the `searchify summarize` command for processing
+files with pending summaries in Supabase. It uses the shared SummaryService
+to process files through the summarization and embedding pipeline.
+
+Key features:
+- Processes up to --limit files from Supabase pending queue
+- Automatic recovery of interrupted/expired processing claims
+- Opt-in retry for failed files (--retry-failed)
+- Retry known non-retryable errors after fix (--retry-permanent)
+- Verbose sanitized error output
+- Graceful interruption handling (preserves completed work)
+
+Pipeline stages per file:
+1. Fetch pending from Supabase
+2. Validate local file exists and matches content hash
+3. Acquire processing claim (prevents concurrent processing)
+4. Generate summary (or reuse existing)
+5. Validate summary for privacy
+6. Generate embedding (or reuse existing)
+7. Persist to Supabase
+8. Release claim, update journal
+
+Exit codes:
+- 0: Success (or nothing to do)
+- 1: Failures or journal errors
+- 2: Invalid arguments
+- 130: Interrupted
+
+Used by: CLI app.py command dispatcher
+"""
+
 import argparse
 import sys
 
 
 def positive_int(value):
+    """
+    Validate positive integer argument.
+
+    Args:
+        value: String value to parse
+
+    Returns:
+        Positive integer
+
+    Raises:
+        argparse.ArgumentTypeError: If not positive
+    """
     number = int(value)
     if number <= 0:
         raise argparse.ArgumentTypeError("must be positive")
@@ -10,6 +56,12 @@ def positive_int(value):
 
 
 def add_arguments(parser):
+    """
+    Add summarize command arguments to parser.
+
+    Args:
+        parser: ArgumentParser instance
+    """
     parser.add_argument("--limit", type=positive_int, default=50)
     parser.add_argument(
         "--recover-processing",
@@ -34,6 +86,15 @@ def add_arguments(parser):
 
 
 def run(args):
+    """
+    Execute summarize command.
+
+    Args:
+        args: Parsed arguments
+
+    Returns:
+        Exit code
+    """
     if getattr(args, "retry_permanent", False) and not args.retry_failed:
         print("--retry-permanent requires --retry-failed.", file=sys.stderr)
         return 2

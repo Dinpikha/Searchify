@@ -1,4 +1,21 @@
-"""Read-only local and provider diagnostics. Never signs in or refreshes tokens."""
+"""
+Health Service - System Diagnostics and Readiness Checks
+
+This module provides comprehensive health diagnostics for Searchify.
+It checks local database integrity, dependency availability, provider
+connectivity (Ollama, Supabase), authentication status, and configuration
+validity - all without making mutating operations.
+
+Key features:
+- Read-only checks: Never signs in, refreshes tokens, or modifies data
+- Parallel provider checks: Ollama and Supabase checked concurrently
+- Keyring inspection: Optional secure session validation (--auth flag)
+- Configuration validation: Embedding dimensions, Supabase URL format, .env loading
+- Scan integration: Optional directory scan for change detection
+- Error aggregation: Collects all issues for actionable feedback
+
+Used by: CLI doctor command, pre-sync validation
+"""
 
 import base64
 import importlib
@@ -30,6 +47,12 @@ _settings = settings_module.settings
 
 
 def get_settings():
+    """
+    Get current settings instance (allows test patching).
+
+    Returns:
+        Settings instance
+    """
     import sys
 
     module = sys.modules[__name__]
@@ -37,15 +60,25 @@ def get_settings():
 
 
 def set_settings(new_settings):
+    """
+    Set settings instance (for test patching).
+
+    Args:
+        new_settings: Settings instance to use
+    """
     global _settings
     _settings = new_settings
 
 
 # Backward compatibility - property that can be patched
 class _SettingsProxy:
+    """Proxy for settings module to allow attribute patching in tests."""
+
+    # Resolve settings lazily so help/startup does not load operational configuration eagerly.
     def __getattr__(self, name):
         return getattr(_settings, name)
 
+    # Forward configuration overrides to the same lazily resolved settings object.
     def __setattr__(self, name, value):
         if name == "_settings":
             super().__setattr__(name, value)
@@ -58,11 +91,25 @@ settings = _settings_proxy
 
 
 class NoRedirects(HTTPRedirectHandler):
+    """HTTP handler that blocks redirects for security."""
+
+    # Refuse redirect targets during diagnostic probes rather than forwarding probe headers.
     def redirect_request(self, *args):
         return None
 
 
 def request_json(url, headers=None, timeout=1.5):
+    """
+    Make HTTP GET request with short timeout and no redirects.
+
+    Args:
+        url: Request URL
+        headers: Optional headers dict
+        timeout: Request timeout in seconds
+
+    Returns:
+        Dict with status, http_status, and data (if successful)
+    """
     try:
         opener = build_opener(ProxyHandler({}), NoRedirects())
         with opener.open(
@@ -82,6 +129,22 @@ def request_json(url, headers=None, timeout=1.5):
 
 
 def valid_supabase_url(value):
+    """
+    Validate Supabase URL format.
+
+    Requirements:
+    - Has hostname
+    - No username/password in URL
+    - No query parameters or fragments
+    - Path is empty or "/"
+    - HTTPS required (except localhost HTTP)
+
+    Args:
+        value: URL string to validate
+
+    Returns:
+        True if valid, False otherwise
+    """
     try:
         url = urlsplit(value)
         return bool(
@@ -104,6 +167,14 @@ def valid_supabase_url(value):
 
 
 def dependencies():
+    """
+    Check availability of required Python dependencies.
+
+    Checks: dotenv, keyring, supabase (with create_client), rich
+
+    Returns:
+        Dict mapping dependency name -> availability boolean
+    """
     result = {}
     for name in ("dotenv", "keyring", "supabase", "rich"):
         try:
@@ -119,12 +190,41 @@ def dependencies():
 
 
 class HealthService:
+    """
+    Comprehensive health diagnostics service.
+
+    Provides methods for checking:
+    - Provider connectivity (Ollama, Supabase)
+    - Authentication status (keyring session validation)
+    - Local database integrity
+    - Configuration validity
+    - Directory scan status
+    - Dependency availability
+    """
+
     def __init__(self, db_path=None, reports_dir=None, settings=None):
+        """
+        Initialize health service.
+
+        Args:
+            db_path: Local SQLite database path
+            reports_dir: Sync reports directory
+            settings: Settings instance (for test injection)
+        """
         self.settings = settings or settings_module.settings
         self.registry = FileRegistry(db_path or self.settings.LOCAL_DB_PATH)
         self.reports_dir = Path(reports_dir or self.settings.REPORTS_DIR)
 
     def _providers(self, offline=False):
+        """
+        Check connectivity to AI and storage providers.
+
+        Args:
+            offline: If True, skip network checks
+
+        Returns:
+            Dict with provider status, HTTP status, and model installation info
+        """
         if offline:
             return {
                 "ollama": {"status": "not checked (offline)"},
@@ -179,6 +279,21 @@ class HealthService:
         return output
 
     def authentication(self, inspect_keyring=False):
+        """
+        Validate Supabase authentication via keyring session.
+
+        If inspect_keyring=False, returns status indicating check not performed.
+        If True, attempts to:
+        1. Retrieve session from keyring
+        2. Decode and validate JWT (expiry, target match)
+        3. Test database access with owner-scoped query
+
+        Args:
+            inspect_keyring: Whether to access keyring (requires --auth flag)
+
+        Returns:
+            Dict with authentication status and details
+        """
         if not inspect_keyring:
             return {
                 "status": "not checked (doctor --auth inspects the secure keyring)",
@@ -226,6 +341,29 @@ class HealthService:
             }
 
     def snapshot(self, scan=False, offline=False, auth=False):
+        """
+        Generate comprehensive health snapshot.
+
+        Checks:
+        - Local database accessibility and metadata
+        - Directory registration and rules
+        - File statuses (completed, pending, failed, stale, skipped, processing, unavailable)
+        - Scan metrics (if requested)
+        - Sync report history
+        - Review artifacts
+        - Provider connectivity
+        - Authentication status
+        - Dependency availability
+        - Configuration validity
+
+        Args:
+            scan: Perform directory scan for change metrics
+            offline: Skip network provider checks
+            auth: Include keyring authentication check
+
+        Returns:
+            Comprehensive health report dict
+        """
         database_error = False
         try:
             dirs = self.registry.directories()

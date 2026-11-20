@@ -1,4 +1,19 @@
-"""Read-only dashboard and directory listing; never initializes or processes data."""
+"""
+CLI Workspace Module - Read-Only Dashboard and Directory Listing
+
+This module implements the `searchify status`, `searchify dirs`, and welcome
+commands. All operations are read-only - no data is initialized, indexed,
+or processed.
+
+Commands:
+- status: Comprehensive health and sync status dashboard
+- welcome: Default command (shows banner + status)
+- directories: List registered directories with rules
+
+Key principle: Never modifies state; safe to run anytime.
+
+Used by: CLI app.py command dispatcher
+"""
 
 import sqlite3
 from contextlib import closing
@@ -8,12 +23,29 @@ from searchify.cli.output import line, literal, table
 
 
 def local_paths():
+    """
+    Get local database and reports directory paths from settings.
+
+    Returns:
+        Tuple of (LOCAL_DB_PATH, REPORTS_DIR)
+    """
     from searchify.config.settings import settings
 
     return settings.LOCAL_DB_PATH, settings.REPORTS_DIR
 
 
 def read_workspace(db_path):
+    """
+    Read workspace metadata from local SQLite database.
+
+    Opens database in read-only mode for safe concurrent access.
+
+    Args:
+        db_path: Path to SQLite database
+
+    Returns:
+        Dict with database status, directory list with file counts, total indexed
+    """
     path = Path(db_path).expanduser().resolve()
     if not path.is_file():
         return {"database": "not created", "directories": [], "indexed": None}
@@ -26,6 +58,27 @@ def read_workspace(db_path):
 
 
 def status(args):
+    """
+    Display comprehensive status dashboard.
+
+    Shows:
+    - Local database status
+    - Registered directories with availability
+    - File counts (indexed, supported, unsupported)
+    - Workspace metrics (new, modified, deleted, etc.)
+    - Sync state counts (completed, pending, failed, etc.)
+    - Last sync timestamps
+    - AI model configuration
+    - Provider connectivity
+    - Authentication status
+    - Health issues
+
+    Args:
+        args: Parsed command arguments (scan, offline flags)
+
+    Returns:
+        Exit code (0=OK, 1=database unavailable)
+    """
     from searchify.services.health_service import HealthService
 
     db, reports = local_paths()
@@ -101,6 +154,15 @@ def status(args):
 
 
 def welcome(args):
+    """
+    Default command: show banner and status.
+
+    Args:
+        args: Parsed command arguments
+
+    Returns:
+        Exit code from status()
+    """
     try:
         from searchify.ui.mascot import show_banner
 
@@ -113,6 +175,17 @@ def welcome(args):
 
 
 def directories(args):
+    """
+    List registered directories with their rules.
+
+    Shows directory ID, path, availability, profile, and sync status.
+
+    Args:
+        args: Parsed command arguments
+
+    Returns:
+        Exit code (0)
+    """
     from searchify.core.file_registry import FileRegistry
 
     db, _ = local_paths()

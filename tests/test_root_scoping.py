@@ -1,3 +1,6 @@
+# Uses nested registered roots and symlinks to verify Scanner ownership boundaries.
+# An incomplete or redirected traversal must not trigger destructive metadata reconciliation.
+
 """Root-retargeting regressions; every filesystem change is in a temporary fixture."""
 from pathlib import Path
 import tempfile

@@ -1,3 +1,5 @@
+# Package-local dependency, credential, and Python cache exclusions.
+
 node_modules/
 .env
 .env.*

@@ -1,3 +1,6 @@
+# Exercises HealthService and diagnostics with temporary metadata and mocked provider responses.
+# Health checks must report uncertainty without writing index state or restoring credentials.
+
 """Read-only dashboard diagnostics with deterministic provider responses."""
 from pathlib import Path
 import tempfile

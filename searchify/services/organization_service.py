@@ -1,4 +1,22 @@
-"""Propose reversible organization. No move, rename, delete or upload executor."""
+"""
+Organization Service - Reversible File Organization Proposals
+
+This module generates proposals for organizing files within registered
+directories. It operates in PROPOSAL ONLY mode - no files are moved,
+renamed, or deleted. All operations require explicit approval and
+verification before execution.
+
+Key features:
+- Proposes moves for root-level files into type-based folders (Documents, Images, Archives)
+- Skips protected files, important files, git-tracked projects, and files already in subdirectories
+- Generates blockers for safety checks (destination exists, symlinks, git dirty, backup unverified)
+- Includes verification requirements and rollback procedures for each proposal
+- Preserves original file metadata for identity verification
+
+DESTINATIONS mapping defines target folders by file extension.
+
+Used by: CLI organize command
+"""
 
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +31,7 @@ from searchify.services.review_service import (
     safe_path,
 )
 
+# Extension to destination folder mapping
 DESTINATIONS = {
     ".pdf": "Documents",
     ".txt": "Documents",
@@ -31,7 +50,28 @@ DESTINATIONS = {
 
 
 class OrganizationService:
+    """
+    Generates file organization proposals for registered directories.
+
+    Analyzes root-level files in each registered directory and proposes
+    moves to appropriate category folders based on file extension.
+    All proposals are non-executable and require manual approval.
+
+    Attributes:
+        registry: FileRegistry instance
+        max_files: Maximum files to scan across all roots
+        backup_path: Optional backup path for recovery verification
+    """
+
     def __init__(self, registry, max_files=50000, backup_path=None):
+        """
+        Initialize organization service.
+
+        Args:
+            registry: FileRegistry instance
+            max_files: Maximum files to process (default: 50000)
+            backup_path: Path to backup for verification
+        """
         self.registry, self.max_files, self.backup_path = (
             registry,
             max_files,
@@ -39,6 +79,19 @@ class OrganizationService:
         )
 
     def propose(self):
+        """
+        Generate organization proposals for all registered roots.
+
+        For each registered directory:
+        1. Inventory root-level files (non-recursive)
+        2. Check git status and backup status
+        3. For each eligible file, propose move to destination folder
+        4. Validate destination safety (no conflicts, not symlink, etc.)
+        5. Generate blockers if any safety check fails
+
+        Returns:
+            Proposal dict with schema_version, timestamp, roots, operations
+        """
         operations = []
         roots = []
         remaining = self.max_files

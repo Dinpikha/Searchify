@@ -1,3 +1,7 @@
+# Uses mocked keyring storage and SDK clients to test per-target session isolation and cache
+# invalidation.
+# Diagnostic authentication reads must never refresh tokens or mutate stored sessions.
+
 """Credential isolation using exclusively fake keyring and authentication objects."""
 import base64
 from contextlib import redirect_stdout

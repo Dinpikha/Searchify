@@ -1,3 +1,7 @@
+# Lightweight repository substitutes used by unit tests for sync/recovery.
+# Deep copies mimic detached provider responses; timestamp/status/hash predicates
+# model conditional writes so stale observations cannot silently replace new state.
+
 """In-memory owner-scoped provider fixtures; never access network or Keychain."""
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -5,6 +9,7 @@ from pathlib import Path
 import uuid
 
 
+# In-memory file/directory repository with guarded updates for sync unit tests.
 class Files:
     owner_id = 'test-owner'
 
@@ -84,6 +89,7 @@ class Files:
         return [deepcopy(row)]
 
 
+# Keep derived summaries and vectors separately, matching the production repository boundary.
 class Summaries:
     def __init__(self):
         self.rows, self.vectors = {}, {}

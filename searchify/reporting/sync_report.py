@@ -87,10 +87,12 @@ _STALE_MESSAGES = frozenset(
 )
 
 
+# Use timezone-aware UTC timestamps so run duration and history remain comparable.
 def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+# Check untrusted metadata against configured secrets and recognizable credential patterns.
 def _sensitive(value):
     # Names and provider request IDs are also untrusted metadata.
     secrets = [settings.SUPABASE_KEY]
@@ -117,6 +119,7 @@ def _sensitive(value):
     )
 
 
+# Redact secrets and reduce untrusted names to bounded printable basename metadata.
 def safe_filename(value):
     if not isinstance(value, str) or _sensitive(value):
         return "[redacted filename]"
@@ -124,12 +127,14 @@ def safe_filename(value):
     return re.sub(r"[^\w.() -]", "_", value)[:160] or "[unnamed]"
 
 
+# Keep only short identifier tokens; invalid or sensitive identifiers are omitted.
 def safe_identifier(value):
     if not isinstance(value, str) or _sensitive(value):
         return None
     return value if re.fullmatch(r"[A-Za-z0-9_-]{1,80}", value) else None
 
 
+# Accept recognized UUID/request-token formats without copying arbitrary provider header text.
 def _request_id(value):
     if not isinstance(value, str) or _sensitive(value):
         return None
@@ -242,6 +247,8 @@ def describe_error(stage, error):
                 ),
                 raw,
             )
+    # Explicit database codes override generic categories; arbitrary error
+    # prose is never used to infer permissions, retryability, or schema failures.
     code = getattr(error, "code", None)
     if not isinstance(code, str) and isinstance(raw, dict):
         code = raw.get("code")
@@ -271,6 +278,7 @@ def describe_error(stage, error):
     }
 
 
+# Build the shared per-file report shape; hash a local identity when no safe remote ID exists.
 def make_outcome(file, outcome, stage=None, error=None, reason=None):
     if outcome not in OUTCOMES:
         raise ValueError("Invalid synchronization outcome.")
@@ -303,7 +311,9 @@ def make_outcome(file, outcome, stage=None, error=None, reason=None):
     }
 
 
+# Accumulate run outcomes and metrics for CLI rendering and append-only JSON history.
 class SyncReport:
+    # Assign one run identity; finish time and metrics are supplied by the sync orchestrator.
     def __init__(self):
         self.run_id = str(uuid.uuid4())
         self.started_at = now()
@@ -313,11 +323,13 @@ class SyncReport:
         self.metrics = {}
         self.dry_run = False
 
+    # Append a normalized file outcome and return it for later orchestration updates.
     def record(self, file, outcome, stage=None, error=None, reason=None):
         result = make_outcome(file, outcome, stage, error, reason)
         self.outcomes.append(result)
         return result
 
+    # Derive totals, grouped corrective actions, and remaining work from current outcomes.
     def snapshot(self):
         counts = Counter(row["outcome"] for row in self.outcomes)
         groups = defaultdict(list)
@@ -369,6 +381,8 @@ class SyncReport:
             }
             for (category, stage), rows in sorted(problems.items())
         ]
+        # Remaining includes deferred and interrupted work as well as failures;
+        # it is not simply total minus completed because many skips are terminal.
         remaining = sum(
             row["outcome"] in {"failed", "stale"}
             or row.get("reason")
@@ -405,6 +419,8 @@ class SyncReport:
             "run_errors": self.run_errors,
         }
 
+    # Publish a flushed private snapshot with a hard link so an existing history file is
+    # never replaced.
     def save(self, directory):
         directory = Path(directory).expanduser()
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -433,6 +449,8 @@ class SyncReport:
         return path
 
 
+# Allow only known diagnostic text when rendering saved reports, which may be externally
+# modified.
 def safe_error_message(value):
     from searchify.ai.ollama_client import _DATABASE_ERRORS, _SAFE_ERROR_MESSAGES
 

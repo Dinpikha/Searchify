@@ -1,3 +1,6 @@
+# Checks FileRepository remote metadata updates against fake provider query chains.
+# Conflicting metadata or worker timestamps must not be overwritten by stale sync observations.
+
 """Owner filtering, paginated reads, conditional claims and metadata-only writes."""
 import importlib
 import sys

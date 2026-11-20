@@ -1,3 +1,8 @@
+# Interactive Supabase authentication shared by owner-scoped repositories.
+# SessionService validates target identities; keyring stores target-bound tokens.
+# Authenticated clients are cached per target and API-key fingerprint, while
+# read-only health diagnostics use a separate path that never refreshes sessions.
+
 import hashlib
 import json
 from getpass import getpass
@@ -18,6 +23,7 @@ SERVICE = KEYRING_SERVICE
 _clients = {}
 
 
+# Capture and validate the target and key together before any authentication work.
 def _configuration(supabase_url=None, supabase_key=None):
     url = settings.SUPABASE_URL if supabase_url is None else supabase_url
     key = settings.SUPABASE_KEY if supabase_key is None else supabase_key
@@ -26,6 +32,7 @@ def _configuration(supabase_url=None, supabase_key=None):
     return canonical_target(url), key
 
 
+# Validate target-bound access/refresh tokens before replacing the matching keyring entry.
 def save_session(session, supabase_url=None):
     target = canonical_target(
         settings.SUPABASE_URL if supabase_url is None else supabase_url
@@ -41,6 +48,7 @@ def save_session(session, supabase_url=None):
     keyring.set_password(SERVICE, session_account(target), stored)
 
 
+# Delete only this target’s keyring entry; a missing entry is already logged out.
 def clear_session(supabase_url=None):
     target = canonical_target(
         settings.SUPABASE_URL if supabase_url is None else supabase_url
@@ -51,11 +59,13 @@ def clear_session(supabase_url=None):
         pass
 
 
+# Construct an unauthenticated SDK client from validated configuration.
 def create_supabase_client(supabase_url=None, supabase_key=None) -> Client:
     target, key = _configuration(supabase_url, supabase_key)
     return create_client(target, key)
 
 
+# Restore and persist refreshed tokens, or prompt for password sign-in if restoration fails.
 def authenticate(supabase_url=None, supabase_key=None):
     target, key = _configuration(supabase_url, supabase_key)
     client = create_supabase_client(target, key)
@@ -97,6 +107,7 @@ def authenticate(supabase_url=None, supabase_key=None):
     return client, response.user.id
 
 
+# Reuse a client only while both target URL and API-key fingerprint match.
 def _authenticated_entry():
     target, key = _configuration()
     fingerprint = hashlib.sha256(key.encode()).digest()
@@ -108,14 +119,17 @@ def _authenticated_entry():
     return cached
 
 
+# Resolve the authenticated SDK client; first use may prompt for credentials.
 def get_client():
     return _authenticated_entry()[0]
 
 
+# Return the same cached authentication identity used by repository owner filters.
 def get_owner_id():
     return _authenticated_entry()[1]
 
 
+# Evict this target’s client and tokens even if remote sign-out fails.
 def logout():
     target = canonical_target(settings.SUPABASE_URL)
     cached = _clients.pop(target, None)

@@ -5,6 +5,7 @@ import sys
 import time
 
 
+# Reject zero/negative batch sizes during argument parsing, before constructing services.
 def positive_int(value):
     number = int(value)
     if number <= 0:
@@ -12,6 +13,7 @@ def positive_int(value):
     return number
 
 
+# Share sync flags with the unified parser; permanent retries require the normal retry opt-in.
 def add_arguments(parser):
     parser.add_argument(
         "--batch-size",
@@ -41,7 +43,10 @@ def add_arguments(parser):
     )
 
 
+# Translate SyncService callback events into terminal progress and a final sanitized report.
 class ProgressDisplay:
+    # Track per-outcome counters locally; service reports remain the authoritative saved
+    # results.
     def __init__(self, verbose=False):
         self.verbose = verbose
         self.start_time = time.time()
@@ -54,6 +59,7 @@ class ProgressDisplay:
         self.stale = 0
         self.skipped = 0
 
+    # Classification seeds counters; subsequent file and batch events update visible progress.
     def __call__(self, value, event):
         now = time.time()
         if event == "starting":
@@ -99,11 +105,13 @@ class ProgressDisplay:
 
         self.last_update = now
 
+    # Include skipped/stale entries in progress because they also finish classification.
     def _print_progress(self, filename, status):
         elapsed = time.time() - self.start_time
         processed = self.completed + self.failed + self.stale + self.skipped
         print(f"  [{processed}/{self.total}] {filename}: {status} ({elapsed:.1f}s)")
 
+    # Render persisted results and separately warn when report publication failed.
     def final_summary(self, result):
         from searchify.cli.reports import render_report
 
@@ -114,6 +122,8 @@ class ProgressDisplay:
             )
 
 
+# Run searchify sync with lazy dependencies; return 2 for invalid flags, 130 for
+# interruption, 1 for failure.
 def run(args):
     try:
         from searchify.services.sync_service import SyncService

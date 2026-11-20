@@ -1,4 +1,25 @@
-"""Non-mutating runtime and connectivity diagnostics."""
+"""
+Doctor CLI - Non-Mutating Runtime Diagnostics
+
+This module implements the `searchify doctor` command for diagnosing
+configuration, dependencies, and connectivity issues. It performs
+read-only checks and never modifies state or refreshes credentials.
+
+Checks performed:
+- Python runtime and dependencies
+- Local database availability
+- Ollama connectivity and model installation
+- Supabase connectivity
+- Authentication status (with --auth flag)
+- Embedding dimension compatibility
+- Error aggregation
+
+Exit codes:
+- 0: All checks passed (or only offline-mode warnings)
+- 1: Fatal errors or authentication failure (with --auth)
+
+Used by: CLI app.py command dispatcher
+"""
 
 import sys
 
@@ -8,6 +29,15 @@ from searchify.services.health_service import HealthService
 
 
 def run(args):
+    """
+    Execute doctor diagnostics.
+
+    Args:
+        args: Parsed command arguments (offline, auth flags)
+
+    Returns:
+        Exit code (0=healthy, 1=issues found)
+    """
     db, reports = local_paths()
     snapshot = HealthService(db, reports).snapshot(offline=args.offline, auth=args.auth)
     line("SEARCHIFY DOCTOR")

@@ -1,3 +1,7 @@
+# Supabase CLI local development stack configuration. Ports, exposed schemas,
+# database/auth services, and local runtime options apply to the disposable stack;
+# Python application connection settings come from config/settings.py instead.
+
 #:schema https://supabase.com/schemas/config/v1.json
 # For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config

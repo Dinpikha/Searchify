@@ -20,6 +20,7 @@ class LiveConfigurationError(ValueError):
     pass
 
 
+# Require both explicit opt-ins and distinct test-stack keys for a literal loopback HTTP target.
 def live_configuration(environment, explicit=False):
     if not explicit or environment.get('SEARCHIFY_RUN_LIVE_E2E')!='1':
         raise LiveConfigurationError('Live tests require --live and SEARCHIFY_RUN_LIVE_E2E=1; normal tests are offline.')
@@ -41,6 +42,7 @@ def live_configuration(environment, explicit=False):
     return url.rstrip('/'),anon,service
 
 
+# Inspect owner rows and historical chunk tables for source markers or prohibited fields.
 def assert_remote_privacy(case, workspace, client, owner):
     from pipeline_support import WRITE_FIELDS
     for table in WRITE_FIELDS:
@@ -55,6 +57,8 @@ def assert_remote_privacy(case, workspace, client, owner):
         case.assertEqual(client.table(table).select('*').eq('owner_id',owner).execute().data,[])
 
 
+# Create disposable users, run real provider acceptance, then attempt session/user/workspace
+# cleanup.
 def run_live(url, anon_key, service_key):
     # Imported only after BOTH opt-ins and target/credential isolation validation.
     from pathlib import Path
@@ -155,6 +159,7 @@ def run_live(url, anon_key, service_key):
     return status
 
 
+# Parse explicit live opt-in and emit a sanitized status report with an appropriate exit code.
 def main(argv=None, environment=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--live',action='store_true',help='Explicitly permit synthetic test data on a disposable local Supabase stack')

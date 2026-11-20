@@ -1,4 +1,20 @@
-"""Local-only Ollama transport with bounded transient retries."""
+"""
+Ollama HTTP Client for Local AI Runtime
+
+This module provides a secure, retry-capable HTTP client for communicating
+with a local Ollama instance. It enforces strict security constraints:
+
+- Only allows connections to local loopback addresses (localhost/127.0.0.1)
+- Disallows HTTPS, authentication, paths, query parameters, fragments
+- Disables HTTP redirects to prevent SSRF
+- Implements exponential backoff retry for transient errors
+- Sanitizes error messages to prevent leakage of file contents or credentials
+
+All AI processing in Searchify runs through this client to ensure
+privacy and reliability.
+
+Used by: summarizer.py, embeddings.py, summary_service.py, sync_service.py
+"""
 
 import ipaddress
 import json
@@ -11,6 +27,13 @@ from searchify.config.settings import settings
 
 
 class OllamaError(RuntimeError):
+    """
+    Base exception for Ollama client errors.
+
+    Attributes:
+        http_status: HTTP status code if error originated from HTTP response
+        request_id: Request ID from Ollama response headers (for debugging)
+    """
     def __init__(self, message, http_status=None, request_id=None):
         super().__init__(message)
         self.http_status = http_status
@@ -18,18 +41,55 @@ class OllamaError(RuntimeError):
 
 
 class _NoRedirects(HTTPRedirectHandler):
+    """
+    HTTP redirect handler that blocks all redirects.
+
+    This prevents SSRF (Server-Side Request Forgery) by ensuring the client
+    never follows redirects to external or unintended endpoints.
+    """
+    # Refuse redirects so requests carrying local source text stay at the validated loopback
+    # endpoint.
     def redirect_request(self, request, response, code, message, headers, new_url):
         return None
 
 
 class OllamaClient:
+    """
+    HTTP client for local Ollama API with bounded retries.
+
+    Enforces that the Ollama host is a local loopback HTTP address with no
+    authentication, path, query, or fragment components. This ensures all
+    AI processing stays on the local machine.
+
+    Attributes:
+        host: Base URL for Ollama API (e.g., "http://localhost:11434")
+        timeout: Request timeout in seconds (default: 180)
+        retries: Number of retry attempts for transient errors (default: 2)
+    """
+
     def __init__(self, host=None, timeout=180, retries=2):
+        """
+        Initialize Ollama client with validation.
+
+        Args:
+            host: Ollama host URL (defaults to settings.OLLAMA_HOST)
+            timeout: Request timeout in seconds
+            retries: Number of retry attempts for transient errors
+
+        Raises:
+            ValueError: If host is not a valid local loopback HTTP address,
+                       or if timeout/retries are invalid
+        """
         self.host = (host or settings.OLLAMA_HOST).rstrip("/")
         parsed = urlsplit(self.host)
+
+        # Validate host is a local loopback address
         try:
             local = ipaddress.ip_address(parsed.hostname).is_loopback
         except (ValueError, TypeError):
             local = parsed.hostname == "localhost"
+
+        # Strict validation: only local HTTP, no auth, no path, no query, no fragment
         if (
             parsed.scheme != "http"
             or not local
@@ -40,13 +100,24 @@ class OllamaClient:
             or parsed.fragment
         ):
             raise ValueError("Ollama must use a local loopback HTTP address.")
+
         if retries < 0 or timeout <= 0:
             raise ValueError("Invalid Ollama retry or timeout configuration.")
+
         self.timeout, self.retries = timeout, retries
+        # Build opener with no proxy, no redirects
         self.opener = build_opener(ProxyHandler({}), _NoRedirects())
 
     def check_available(self):
-        """Probe the local runtime without sending a prompt or file contents."""
+        """
+        Probe the local Ollama runtime without sending prompts or file contents.
+
+        Calls GET /api/tags to verify Ollama is running and responding.
+        Uses a short timeout (min 5s) and retries with exponential backoff.
+
+        Raises:
+            OllamaUnavailableError: If Ollama cannot be reached after retries
+        """
         request = Request(self.host + "/api/tags", method="GET")
         for attempt in range(self.retries + 1):
             try:
@@ -70,6 +141,30 @@ class OllamaClient:
         ) from None
 
     def post(self, endpoint, payload):
+        """
+        Send POST request to Ollama API with retry logic.
+
+        Implements exponential backoff retry for transient HTTP errors:
+        - 408 Request Timeout
+        - 429 Too Many Requests
+        - 500 Internal Server Error
+        - 502 Bad Gateway
+        - 503 Service Unavailable
+        - 504 Gateway Timeout
+
+        Non-transient errors (4xx except 408/429) are raised immediately.
+        Connection errors and timeouts are retried.
+
+        Args:
+            endpoint: API endpoint (e.g., "/api/generate", "/api/embed")
+            payload: JSON-serializable request payload
+
+        Returns:
+            Parsed JSON response dict
+
+        Raises:
+            OllamaError: On HTTP errors, connection failures, or invalid responses
+        """
         request = Request(
             self.host + endpoint,
             data=json.dumps(payload).encode(),
@@ -89,6 +184,7 @@ class OllamaClient:
                 last_request_id = (
                     error.headers.get("x-request-id") if error.headers else None
                 )
+                # Non-transient errors: fail immediately
                 if error.code not in {408, 429, 500, 502, 503, 504}:
                     raise OllamaError(
                         f"Ollama HTTP error {error.code}.",
@@ -111,7 +207,13 @@ class OllamaClient:
 
 
 class OllamaUnavailableError(OllamaError):
-    """The local Ollama runtime cannot be reached before processing starts."""
+    """
+    Raised when the local Ollama runtime cannot be reached before processing starts.
+
+    This is distinct from transient errors during processing - it indicates
+    Ollama is not running or not accessible at the configured host.
+    """
+    pass
 
 
 # Exception bodies can contain source excerpts, request payloads or credentials.
@@ -134,6 +236,8 @@ _SAFE_ERROR_MESSAGES = frozenset(
         "No extracted content to summarize.",
     }
 )
+
+# PostgreSQL error codes mapped to human-readable messages
 _DATABASE_ERRORS = {
     "23503": "Foreign key constraint failed.",
     "23505": "Unique constraint failed.",
@@ -150,7 +254,21 @@ _DATABASE_ERRORS = {
 
 
 def format_processing_error(stage, error):
-    """Return a bounded diagnostic that never incorporates untrusted error text."""
+    """
+    Format a processing error for logging/reporting without leaking sensitive data.
+
+    This function sanitizes error messages to ensure no file contents, credentials,
+    or provider error details are exposed. Only known-safe error messages from
+    Searchify's own code are preserved; everything else is replaced with a generic
+    redacted message.
+
+    Args:
+        stage: Processing stage ("extraction", "summarization", "embedding", "persistence")
+        error: Exception that occurred
+
+    Returns:
+        Formatted error string: "stage: ExceptionType: sanitized_message"
+    """
     import errno
     import re
 
@@ -160,12 +278,14 @@ def format_processing_error(stage, error):
         else "persistence"
     )
     exception_type = type(error).__name__
+    # Validate exception type name is a safe identifier
     if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,79}", exception_type):
         exception_type = "Exception"
     message = (
         "Provider error details redacted to protect file contents and credentials."
     )
     raw = error.args[0] if error.args else None
+    # Preserve known-safe Searchify-generated messages
     if isinstance(raw, str) and raw in _SAFE_ERROR_MESSAGES:
         message = raw
     elif isinstance(error, HTTPError):
@@ -185,6 +305,7 @@ def format_processing_error(stage, error):
         r"Ollama HTTP error [1-5][0-9]{2}( after retries)?\.", raw
     ):
         message = raw
+    # Check for PostgreSQL error codes
     code = getattr(error, "code", None)
     if not isinstance(code, str) and isinstance(raw, dict):
         code = raw.get("code")
@@ -194,7 +315,19 @@ def format_processing_error(stage, error):
 
 
 def check_processing_runtime(summarizer, embeddings):
-    """Check each distinct Ollama client; injected non-Ollama providers may omit it."""
+    """
+    Verify both summarization and embedding runtimes are available.
+
+    Checks each distinct Ollama client (by host) once. Injected non-Ollama
+    providers may not have a check_available method.
+
+    Args:
+        summarizer: Summarizer instance with .client attribute
+        embeddings: Embeddings instance with .client attribute
+
+    Raises:
+        OllamaUnavailableError: If either runtime is unavailable (with processing_stage attribute set)
+    """
     checked = set()
     for stage, provider in (("summarization", summarizer), ("embedding", embeddings)):
         client = getattr(provider, "client", None)

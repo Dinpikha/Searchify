@@ -1,3 +1,7 @@
+# Validates the explicit live runner’s opt-ins, loopback target checks, and separate
+# credentials.
+# These tests exercise configuration guards without invoking the live acceptance workflow.
+
 """Only validate live-runner guards; never import SDKs or connect to services."""
 from contextlib import redirect_stderr, redirect_stdout
 import io

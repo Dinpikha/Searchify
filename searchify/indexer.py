@@ -1,3 +1,8 @@
+# Local SQLite metadata index and compatibility command entry point.
+# FileRegistry/Scanner provide the current indexing workflow; older helpers remain
+# available here. SummaryService uses resolve_indexed_file to validate registered
+# identities before extraction. No new source-content cache is created.
+
 import argparse
 import hashlib
 import os
@@ -33,12 +38,15 @@ SKIP_DIRS = {
 }
 
 
+# Open a writable metadata connection; callers own commit and close lifetimes.
 def connect(db_path=None):
     path = Path(db_path or DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    # WAL permits concurrent readers; foreign keys enforce root ownership and
+    # secure deletion reduces remnants when old cached content is removed.
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA secure_delete=ON")
@@ -46,8 +54,11 @@ def connect(db_path=None):
     return conn
 
 
+# Create root/file tables and indexes, then remove any legacy source cache.
 def initialize(db_path=None):
     with closing(connect(db_path)) as conn, conn:
+        # Absolute paths identify local files. Root deletion cascades metadata
+        # removal through foreign keys without touching original files.
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS directories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,6 +101,8 @@ def purge_legacy_content(db_path):
         legacy = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_search'"
         ).fetchone()
+    # Reclaim database pages and truncate WAL after dropping the historical text
+    # cache, rather than leaving its contents in SQLite storage artifacts.
     if legacy:
         with closing(sqlite3.connect(path)) as conn:
             conn.execute("PRAGMA secure_delete=ON")
@@ -99,6 +112,7 @@ def purge_legacy_content(db_path):
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
+# Compatibility registration validates the root and inserts it idempotently.
 def register_directory(directory):
     path = Path(directory).expanduser().resolve()
 
@@ -114,6 +128,7 @@ def register_directory(directory):
     print(f"Registered: {path}")
 
 
+# Hash UTF-8 extracted text, matching the summary pipeline content identity.
 def calculate_hash(content):
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
@@ -179,12 +194,14 @@ def resolve_indexed_file(db_path, directory_path, relative_path, expected_hash):
     return path
 
 
+# Legacy single-root scan updates metadata and prunes missing rows only after a complete walk.
 def index_directory(conn, root_id, root_path):
     scan_id = str(uuid.uuid4())
     errors = []
 
     print(f"\nIndexing: {root_path}")
 
+    # Retain traversal errors so inaccessible paths cannot be mistaken for deletions.
     def on_walk_error(error):
         errors.append(error)
 
@@ -355,6 +372,8 @@ def index_all():
 
 def search_files(query, limit=10):
     """Search indexed names without initializing data or reading original contents."""
+    # Tokenize user input into bound substring parameters, then recheck current
+    # filesystem availability and directory rules before displaying matches.
     terms = re.findall(r"[\w+-]+", query)
     if not terms:
         print("Please provide a searchable query.")
@@ -409,6 +428,7 @@ def search_files(query, limit=10):
         print(f"{position}. {literal(row['name'])}\n   {literal(row['path'])}")
 
 
+# Legacy status initializes the index; the unified workspace dashboard is read-only.
 def show_status():
     initialize()
 
@@ -423,6 +443,7 @@ def show_status():
     print(f"Database: {DB_PATH}")
 
 
+# Standalone indexer command parser; the public CLI dispatches through cli.app instead.
 def main():
     parser = argparse.ArgumentParser(description="Searchify local file indexer")
 

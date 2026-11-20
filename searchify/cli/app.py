@@ -1,4 +1,31 @@
-"""Unified command discovery with lazy loading of operational dependencies."""
+"""
+CLI Application - Unified Command Discovery and Dispatch
+
+This module defines the Searchify command-line interface with lazy loading
+of operational dependencies. It builds the argument parser, registers all
+commands and subcommands, and dispatches to handler functions.
+
+Key design:
+- Lazy imports: Command modules only imported when invoked
+- Safe argument builders: Can be imported without AI/SDK dependencies
+- Unified error handling: Sanitizes exceptions to prevent credential leakage
+- Handler format: "module:function" strings for dynamic dispatch
+
+Commands:
+- help: Show command help
+- status: Show workspace, sync, and health status
+- doctor: Diagnose configuration and connectivity
+- sync: Synchronize registered files
+- summarize: Process pending summaries
+- report: View sync reports
+- dirs: Manage registered directories (add, remove, show, configure)
+- review: Review project activity and generate recommendations
+- organize: Propose file organization (no execution)
+- search: Search metadata or semantic summaries
+- add/index: Legacy compatibility aliases
+
+Used by: __main__.py (entry point)
+"""
 
 import argparse
 import importlib
@@ -6,6 +33,18 @@ import sys
 
 
 def positive_int(value):
+    """
+    Validate positive integer argument.
+
+    Args:
+        value: String value to parse
+
+    Returns:
+        Positive integer
+
+    Raises:
+        argparse.ArgumentTypeError: If not a positive integer
+    """
     try:
         number = int(value)
     except ValueError:
@@ -16,6 +55,18 @@ def positive_int(value):
 
 
 def result_limit(value):
+    """
+    Validate search result limit (1-1000).
+
+    Args:
+        value: String value to parse
+
+    Returns:
+        Validated integer between 1 and 1000
+
+    Raises:
+        argparse.ArgumentTypeError: If out of range
+    """
     number = positive_int(value)
     if number > 1000:
         raise argparse.ArgumentTypeError("must be between 1 and 1000")
@@ -23,6 +74,15 @@ def result_limit(value):
 
 
 def build_parser():
+    """
+    Build the complete argument parser with all commands.
+
+    Creates ArgumentParser with subparsers for each command.
+    Uses lazy handler strings ("module:function") for dynamic import.
+
+    Returns:
+        Tuple of (parser, pages_dict) where pages_dict maps command tuples to parsers
+    """
     parser = argparse.ArgumentParser(
         prog="searchify",
         description="Local-first file discovery and management.",
@@ -33,6 +93,18 @@ def build_parser():
     pages = {(): parser}
 
     def command(name, help_text, handler, **kwargs):
+        """
+        Register a command with subparser.
+
+        Args:
+            name: Command name
+            help_text: Help description
+            handler: Handler string "module:function"
+            **kwargs: Additional ArgumentParser arguments
+
+        Returns:
+            Configured subparser
+        """
         page = commands.add_parser(
             name, help=help_text, description=help_text, **kwargs
         )
@@ -40,10 +112,13 @@ def build_parser():
         pages[(name,)] = page
         return page
 
+    # Help command
     help_page = command("help", "Show all commands or help for a command.", "help")
     help_page.add_argument(
         "topic", nargs="*", help="Command and optional subcommand, e.g. dirs add"
     )
+
+    # Status command
     status = command(
         "status",
         "Show workspace, synchronization and read-only service health.",
@@ -64,6 +139,8 @@ def build_parser():
         action="store_false",
         help="Use indexed metadata without searching for new files",
     )
+
+    # Doctor command
     doctor = command(
         "doctor",
         "Diagnose configuration, dependencies and connectivity without refreshing credentials.",
@@ -79,10 +156,11 @@ def build_parser():
         help="Inspect the cached keyring session; macOS may request Keychain access",
     )
 
-    # These argument builders are deliberately safe to import without AI/SDK dependencies.
+    # Import argument builders (safe - no AI/SDK dependencies)
     from searchify.cli.summarize import add_arguments as summarize_arguments
     from searchify.cli.sync import add_arguments as sync_arguments
 
+    # Sync command
     sync_arguments(
         command(
             "sync",
@@ -90,6 +168,8 @@ def build_parser():
             "searchify.cli.sync:run",
         )
     )
+
+    # Summarize command
     summarize_arguments(
         command(
             "summarize",
@@ -97,6 +177,8 @@ def build_parser():
             "searchify.cli.summarize:run",
         )
     )
+
+    # Report command
     report = command(
         "report",
         "Show the latest saved local sync report.",
@@ -111,12 +193,15 @@ def build_parser():
         "--history", action="store_true", help="List saved synchronization reports"
     )
 
+    # Directories command group
     dirs = command(
         "dirs",
         "List or manage explicitly registered directories.",
         "searchify.cli.workspace:directories",
     )
     subdirs = dirs.add_subparsers(dest="directory_command", metavar="ACTION")
+
+    # dirs add
     add = subdirs.add_parser(
         "add",
         help="Register a directory without indexing or syncing it.",
@@ -131,6 +216,8 @@ def build_parser():
     )
     add.set_defaults(handler="searchify.cli.directories:add")
     pages[("dirs", "add")] = add
+
+    # dirs remove
     remove = subdirs.add_parser(
         "remove",
         help="Safely remove local registration and metadata only.",
@@ -144,12 +231,16 @@ def build_parser():
     )
     remove.set_defaults(handler="searchify.cli.directories:remove")
     pages[("dirs", "remove")] = remove
+
+    # dirs show
     show = subdirs.add_parser(
         "show", help="Inspect the rules of one registered directory."
     )
     show.add_argument("directory")
     show.set_defaults(handler="searchify.cli.directories:show")
     pages[("dirs", "show")] = show
+
+    # dirs configure
     configure = subdirs.add_parser(
         "configure",
         help="Modify rules for one registered directory; no automatic processing.",
@@ -179,6 +270,7 @@ def build_parser():
     configure.set_defaults(handler="searchify.cli.directories:configure")
     pages[("dirs", "configure")] = configure
 
+    # Review command
     review = command(
         "review",
         "Review project activity, generated folders, duplicate candidates and clutter; no cleanup.",
@@ -202,6 +294,8 @@ def build_parser():
         action="store_true",
         help="Explicitly save the metadata-only recommendation artifact locally",
     )
+
+    # Organize command
     organize = command(
         "organize",
         "Propose organization for user review; never execute moves, renames, deletion or uploads.",
@@ -218,6 +312,7 @@ def build_parser():
         help="Explicitly save the metadata-only plan locally",
     )
 
+    # Search command
     search = command(
         "search",
         "Search indexed metadata, or stored summaries with --semantic.",
@@ -232,6 +327,8 @@ def build_parser():
         action="store_true",
         help="Use existing local embeddings and summary similarity search",
     )
+
+    # Legacy compatibility aliases
     alias = command(
         "add", "Compatibility alias for dirs add.", "searchify.cli.legacy:add"
     )
@@ -245,20 +342,39 @@ def build_parser():
 
 
 def main(argv=None):
+    """
+    Main CLI entry point.
+
+    Parses arguments, handles help command specially, then dynamically
+    imports and invokes the handler function. All exceptions are caught
+    and sanitized to prevent credential/secret leakage.
+
+    Args:
+        argv: Command line arguments (default: sys.argv[1:])
+
+    Returns:
+        Exit code (0=success, non-zero=error)
+    """
     parser, pages = build_parser()
     args = parser.parse_args(argv)
+
+    # Special handling for help command
     if args.handler == "help":
         page = pages.get(tuple(args.topic))
         if page is None:
             parser.error("unknown help topic; use searchify help to list commands")
         page.print_help()
         return 0
+
+    # Planned feature placeholder
     if args.handler == "planned":
         print(
             f"{args.planned_feature} is not implemented yet (Phase {args.planned_phase}). No operations were performed.",
             file=sys.stderr,
         )
         return 2
+
+    # Dynamic handler dispatch
     module, name = args.handler.split(":")
     try:
         result = getattr(importlib.import_module(module), name)(args)

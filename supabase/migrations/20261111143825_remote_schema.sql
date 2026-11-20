@@ -1,3 +1,9 @@
+-- Derived-summary schema consumed by database.repositories and repositories.
+-- Each file has one replaceable summary and each summary one 768-dimensional
+-- embedding. Query history/matches support separate repository operations; their
+-- presence does not mean the current SearchService automatically records searches.
+
+-- Unique file_id replaces a file summary in place; source hash detects stale derivations.
 CREATE TABLE "public"."file_summaries" (
   "id"                  uuid                     NOT NULL DEFAULT gen_random_uuid(),
   "owner_id"            uuid                     NOT NULL,
@@ -17,6 +23,7 @@ CREATE TABLE "public"."file_summaries" (
 ALTER TABLE "public"."file_summaries"
   ENABLE ROW LEVEL SECURITY;
 
+-- One vector per summary; model_name prevents comparisons across incompatible models.
 CREATE TABLE "public"."file_summary_embeddings" (
   "summary_id" uuid                     NOT NULL,
   "owner_id"   uuid                     NOT NULL,
@@ -29,6 +36,7 @@ CREATE TABLE "public"."file_summary_embeddings" (
 ALTER TABLE "public"."file_summary_embeddings"
   ENABLE ROW LEVEL SECURITY;
 
+-- One result per query/file; stores retrieval/rerank scores and explicit selection state.
 CREATE TABLE "public"."query_file_matches" (
   "id"                 uuid                     NOT NULL DEFAULT gen_random_uuid(),
   "owner_id"           uuid                     NOT NULL,
@@ -48,6 +56,7 @@ CREATE TABLE "public"."query_file_matches" (
 ALTER TABLE "public"."query_file_matches"
   ENABLE ROW LEVEL SECURITY;
 
+-- Owner query history with an expiry timestamp; deletion is an explicit repository operation.
 CREATE TABLE "public"."query_history" (
   "id"               uuid                     NOT NULL DEFAULT gen_random_uuid(),
   "owner_id"         uuid                     NOT NULL,
@@ -64,6 +73,8 @@ CREATE TABLE "public"."query_history" (
 ALTER TABLE "public"."query_history"
   ENABLE ROW LEVEL SECURITY;
 
+-- Summary processing is separate from file availability. summary_updated_at is
+-- also the conditional-update token used by renewable ProcessingClaim workers.
 ALTER TABLE "public"."files"
   ADD COLUMN "summary_status" text NOT NULL DEFAULT 'pending'::text;
 
@@ -91,6 +102,8 @@ ALTER TABLE "public"."query_file_matches"
 ALTER TABLE "public"."query_history"
   ADD CONSTRAINT "query_history_owner_id_fkey" FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 
+-- Hash/owner indexes support reuse and scoped history reads; GIN indexes JSON
+-- metadata and HNSW indexes cosine vectors. Expiry indexing supports retention cleanup.
 CREATE INDEX idx_file_summaries_data ON public.file_summaries USING gin (summary_data);
 
 CREATE INDEX idx_file_summaries_hash ON public.file_summaries USING btree (source_content_hash);
@@ -113,6 +126,8 @@ CREATE INDEX idx_summary_embeddings_owner ON public.file_summary_embeddings USIN
 
 CREATE INDEX idx_summary_embeddings_vector ON public.file_summary_embeddings USING hnsw (embedding extensions.vector_cosine_ops);
 
+-- Apply owner isolation to both reads and writes, in addition to composite
+-- ownership foreign keys between files, summaries, embeddings, and query matches.
 CREATE POLICY "Users manage their own summaries" ON "public"."file_summaries"
   FOR ALL
   TO "authenticated"

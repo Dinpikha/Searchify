@@ -1,3 +1,7 @@
+# Verifies structured diagnostics, aggregate outcomes, and append-only report publication.
+# Temporary artifacts and synthetic errors test redaction without exposing real provider
+# payloads.
+
 """Classified failure history, privacy and atomic local persistence."""
 import io
 import json

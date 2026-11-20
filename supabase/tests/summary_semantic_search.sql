@@ -1,3 +1,7 @@
+-- Transactional SQL acceptance checks for the real summary-search RPC and RLS.
+-- Two synthetic owners and known vector directions verify ranking, limits, model
+-- compatibility, stale/incomplete filtering, and rejection of missing identity.
+
 -- Run on a disposable migrated Supabase database with:
 -- psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/summary_semantic_search.sql
 -- Fixtures and changes are rolled back. No original file contents are used.
@@ -29,6 +33,8 @@ DO $$ BEGIN
         RAISE EXCEPTION 'Anonymous callers must not have execute permission';
     END IF;
 END $$;
+-- Leave the privileged fixture-creation role and simulate owner one’s JWT so
+-- subsequent RPC queries exercise caller privileges and row-level policies.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000001', true);
 SELECT set_config('request.jwt.claims', '{"sub":"10000000-0000-0000-0000-000000000001"}', true);

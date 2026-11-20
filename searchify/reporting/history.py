@@ -4,10 +4,14 @@ import json
 from pathlib import Path
 
 
+# Return newest-name-first valid sync reports plus an invalid-file count without creating
+# any files.
 def load_reports(directory):
     valid, invalid = [], 0
     for path in sorted(Path(directory).expanduser().glob("sync-*.json"), reverse=True):
         try:
+            # History is untrusted input: avoid redirected/oversized reads and
+            # require nonnegative integer counts before the CLI consumes them.
             if path.is_symlink() or path.stat().st_size > 64 * 1024 * 1024:
                 raise ValueError("Unsafe or oversized report")
             with path.open(encoding="utf-8") as source:

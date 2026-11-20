@@ -1,3 +1,7 @@
+# Rich terminal branding used by sync and summarize before progress output.
+# Artwork is loaded relative to this package so installed CLI entry points do
+# not depend on the current working directory. This module has no input controls.
+
 from pathlib import Path
 
 from rich.console import Console
@@ -21,6 +25,7 @@ def render_mascot():
     console.print(artwork, markup=False, highlight=False, soft_wrap=True)
 
 
+# Clear the terminal, render the mascot, and surround it with the CLI title and tagline.
 def show_banner():
     console.clear()
 

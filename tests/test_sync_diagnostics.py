@@ -1,3 +1,8 @@
+# Injects transport and pipeline-stage failures to verify retry behavior and sanitized
+# diagnostics.
+# Captured logs/callbacks must identify failing stages without including source text or
+# credentials.
+
 """Runtime and diagnostics tests: temporary files and mocked providers only."""
 import io
 import json

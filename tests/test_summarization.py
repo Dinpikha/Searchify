@@ -1,3 +1,7 @@
+# Checks extraction, generation, embedding validation, and summary persistence with
+# synthetic inputs.
+# Covers malformed/incomplete output and stale-file rejection at the pipeline boundaries.
+
 from contextlib import closing
 import hashlib
 import sqlite3

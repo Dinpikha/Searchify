@@ -1,3 +1,8 @@
+# Offline cross-module regression coverage for indexing, synchronization, and summary
+# processing.
+# External dependencies are faked or patched so default discovery does not require user
+# credentials.
+
 """Cross-phase regression and performance contracts; no live providers."""
 from contextlib import redirect_stdout, redirect_stderr
 import io

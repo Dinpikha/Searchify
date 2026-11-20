@@ -1,3 +1,8 @@
+# Exercises renewable processing claims and interrupted-work recovery using controlled
+# timestamps/workers.
+# Conditional updates must preserve newer/foreign work and recover only eligible local
+# candidates.
+
 """Crash, lease and retry regressions. Temporary roots and fake providers only."""
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone

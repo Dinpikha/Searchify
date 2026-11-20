@@ -7,6 +7,8 @@ import uuid
 from pathlib import Path
 
 
+# Save a JSON plan under a UUID name; private temporary writes are published without
+# overwriting artifacts.
 def save_artifact(directory, prefix, data):
     directory = Path(directory).expanduser()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -26,6 +28,8 @@ def save_artifact(directory, prefix, data):
             target.write("\n")
             target.flush()
             os.fsync(target.fileno())
+        # Both paths are on the same filesystem. Linking publishes the complete
+        # file atomically and fails instead of overwriting an existing artifact.
         os.link(temporary, path)
     finally:
         if temporary is not None:

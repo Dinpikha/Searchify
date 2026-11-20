@@ -1,3 +1,8 @@
+# Offline/live acceptance harness sharing production repositories and AI clients.
+# Audited wrappers enforce allowed persistence fields and canary exclusion.
+# In-memory queries and fake Ollama isolate offline runs; PipelineWorkspace owns
+# disposable source/index/report files and lifecycle assertions shared with live tests.
+
 """Shared E2E fixtures. No default authentication, keyring or live service access."""
 from contextlib import redirect_stdout
 from copy import deepcopy
@@ -36,6 +41,8 @@ WRITE_FIELDS = {
 }
 
 
+# Inject the supplied owner/client into real repositories while explicitly forbidding
+# application authentication.
 def repositories(client, owner, db):
     # Import the actual repositories without importing application authentication.
     auth = ModuleType('searchify.database.supabase_client')
@@ -53,6 +60,7 @@ def repositories(client, owner, db):
     return files, summaries
 
 
+# Wrap a real or fake client and reject disallowed fields/source markers before every write.
 class AuditedClient:
     def __init__(self, client, canaries):
         self.client, self.canaries, self.writes = client, canaries, []
@@ -72,6 +80,7 @@ class AuditedClient:
         self.writes.append((table, deepcopy(payload)))
 
 
+# Intercept mutating query-chain calls, then delegate response behavior to the wrapped provider.
 class AuditedQuery:
     def __init__(self, audit, table, query):
         self.audit, self.table, self.query = audit, table, query
@@ -120,6 +129,7 @@ class MemorySupabase:
         return sorted(results, key=lambda row:(-row['similarity'],row['file_id']))[:limit]
 
 
+# Implement the PostgREST subset needed by acceptance tests, serialized under the client mutex.
 class MemoryQuery:
     def __init__(self, client, table):
         self.client, self.table = client, table
@@ -205,6 +215,8 @@ class CountedOllama:
         return self.client.post(endpoint,payload)
 
 
+# Own disposable files, canaries, repositories, AI providers, and report directories for one
+# scenario.
 class PipelineWorkspace:
     def __init__(self, client, owner, ollama):
         self.temp=tempfile.TemporaryDirectory(prefix='searchify-e2e-')
@@ -260,6 +272,8 @@ class PipelineWorkspace:
             case.assertFalse(any(content in value for content in self.sources))
 
 
+# Shared acceptance scenario verifies initial sync, reuse, changes, deletion, ranking, and
+# source privacy.
 def exercise_lifecycle(case, workspace):
     """Shared real service/repository lifecycle, run offline or by explicit live runner."""
     w=workspace

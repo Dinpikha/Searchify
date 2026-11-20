@@ -1,3 +1,7 @@
+# Runs production scan, repository, AI-client, and search paths against in-memory
+# Supabase/fake HTTP.
+# Canary source markers catch leaks; this cannot establish real PostgreSQL RLS behavior.
+
 """Offline E2E: real pipeline/repositories, fake Ollama HTTP and Supabase boundary."""
 from copy import deepcopy
 import json

@@ -1,3 +1,7 @@
+# Regression CI for the Python CLI: offline tests and smoke commands run on
+# supported interpreters, followed by a wheel build. Ruff checks are advisory;
+# live Ollama/Supabase acceptance is not part of this workflow.
+
 name: Searchify CI
 
 on:

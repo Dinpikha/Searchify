@@ -55,12 +55,14 @@ IMPORTANT = (
 )
 
 
+# Sanitize each path segment before including local metadata in recommendation output.
 def safe_path(path):
     return "/".join(
         safe_filename(part) if part else "" for part in str(path).split("/")
     )
 
 
+# Read bounded Git status/commit metadata; unknown state is distinct from a clean repository.
 def git_metadata(root):
     root = Path(root)
     if not root_is_unredirected(root):
@@ -78,6 +80,8 @@ def git_metadata(root):
             "dirty": None,
             "last_commit": None,
         }
+    # Disable optional locks, hooks, fsmonitor, signatures, and prompts so a
+    # read-only recommendation probe does not invoke project-configured helpers.
     prefix = [
         "git",
         "--no-optional-locks",
@@ -122,6 +126,8 @@ def git_metadata(root):
         }
 
 
+# Check directory availability only; existence cannot establish backup coverage or
+# restorability.
 def backup_metadata(path=None):
     if path is None:
         return {"status": "unknown; no backup location supplied", "verified": False}
@@ -146,6 +152,7 @@ def inventory(root, max_files=50000, skip_roots=(), recursive=True):
     complete = True
     visited = 0
 
+    # Mark the inventory incomplete rather than treating unreadable branches as empty.
     def onerror(error):
         nonlocal complete
         complete = False
@@ -211,6 +218,8 @@ def byte_hash(path, expected_signature):
     try:
         if path.is_symlink() or signature(path.stat()) != expected_signature:
             return None
+        # Read at most the recorded size plus one byte, and compare signatures
+        # again afterward; growing/changing files cannot establish duplicates.
         remaining = int(expected_signature.split(":")[2]) + 1
         read = 0
         with path.open("rb") as source:
@@ -230,7 +239,10 @@ def byte_hash(path, expected_signature):
         return None
 
 
+# Build metadata-based review candidates for CLI presentation; this service does not execute
+# cleanup.
 class ReviewService:
+    # Configure inactivity, generated-size, and scan bounds around an injected local registry.
     def __init__(
         self,
         registry,
@@ -246,6 +258,8 @@ class ReviewService:
         )
         self.max_files, self.backup_path = max_files, backup_path
 
+    # Inspect registered roots, group review candidates, and expose uncertainty as
+    # recommendation blockers.
     def review(self, progress_callback=None):
         recommendations = []
         project_details = []

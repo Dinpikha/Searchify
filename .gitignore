@@ -1,3 +1,5 @@
+# Keep dependencies, credentials, local tooling state, and build outputs out of source control.
+
 node_modules/
 .env
 .env.*

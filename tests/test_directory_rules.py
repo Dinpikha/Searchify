@@ -1,3 +1,8 @@
+# Uses temporary registered roots to verify per-directory Scanner policies and CLI
+# unregistration.
+# Checks that profiles, size limits, and nested/protected paths cannot bypass extraction
+# boundaries.
+
 """Directory-scoped policies, explicit unregistration and extraction limits."""
 import io
 from contextlib import redirect_stdout

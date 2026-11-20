@@ -1,4 +1,31 @@
-"""Present recommendations for user review, never execute cleanup."""
+"""
+CLI Review Module - Present Recommendations for User Review
+
+This module implements the `searchify review` command for generating
+and displaying file/project recommendations. It operates in
+RECOMMENDATIONS ONLY mode - no files are modified, deleted, or cleaned up.
+
+Analysis performed:
+- Inactive projects (no activity for N days)
+- Large generated/cache folders
+- Loose files in registered roots
+- Duplicate files (same size + byte hash)
+
+Each recommendation includes:
+- Category and reason
+- Affected file paths
+- Actionable suggestion
+- Git status (clean/dirty/unavailable)
+- Backup status
+
+Options:
+- --days: Inactivity threshold (default: 90)
+- --max-files: Scan limit (default: 50000)
+- --backup-path: Check backup availability
+- --save: Save review artifact locally
+
+Used by: CLI app.py command dispatcher
+"""
 
 from searchify.cli.output import line
 from searchify.cli.workspace import local_paths
@@ -8,6 +35,15 @@ from searchify.services.review_service import ReviewService
 
 
 def run(args):
+    """
+    Execute review command.
+
+    Args:
+        args: Parsed arguments (days, max_files, backup_path, save)
+
+    Returns:
+        Exit code (0)
+    """
     db, _ = local_paths()
     review = ReviewService(
         FileRegistry(db),

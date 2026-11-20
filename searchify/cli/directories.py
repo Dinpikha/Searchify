@@ -1,4 +1,29 @@
-"""Explicit per-directory rule management and metadata-only unregistration."""
+"""
+CLI Directories Module - Explicit Per-Directory Rule Management
+
+This module implements the `searchify dirs` subcommands for managing
+registered directories and their scanning rules. All operations are
+metadata-only - no files are moved, deleted, or synchronized.
+
+Commands:
+- add: Register a directory with a profile (source, android, documents)
+- show: Display directory rules as JSON
+- configure: Modify rules (include/exclude/extensions/max-size/sync)
+- remove: Unregister directory (metadata only, with confirmation)
+
+Key principles:
+- Explicit registration: Only user-specified directories are scanned
+- Per-directory rules: Each root has independent include/exclude/extensions
+- Metadata-only removal: Original files and remote records preserved
+- Workspace locking: Concurrent modifications prevented
+
+Profiles:
+- source: Default for code (excludes build, deps, cache dirs)
+- android: Android projects (excludes build, .gradle, generated)
+- documents: Text/markdown files (excludes .git, temp files)
+
+Used by: CLI app.py command dispatcher
+"""
 
 import json
 import sys
@@ -11,6 +36,19 @@ from searchify.core.scanner import DirectoryRules
 
 
 def registered(registry, path):
+    """
+    Find registered directory by path.
+
+    Args:
+        registry: FileRegistry instance
+        path: Directory path to find
+
+    Returns:
+        Directory row dict
+
+    Raises:
+        ValueError: If directory not registered
+    """
     root = str(Path(path).expanduser().resolve())
     row = next((row for row in registry.directories() if row["path"] == root), None)
     if row is None:
@@ -19,6 +57,15 @@ def registered(registry, path):
 
 
 def add(args):
+    """
+    Register a new directory with specified profile.
+
+    Args:
+        args: Parsed arguments (directory, profile)
+
+    Returns:
+        Exit code (0=success, 1=error)
+    """
     db, _ = local_paths()
     registry = FileRegistry(db)
     try:
@@ -33,6 +80,15 @@ def add(args):
 
 
 def show(args):
+    """
+    Display rules for a registered directory.
+
+    Args:
+        args: Parsed arguments (directory)
+
+    Returns:
+        Exit code (0=success, 1=not registered)
+    """
     db, _ = local_paths()
     registry = FileRegistry(db)
     try:
@@ -47,6 +103,18 @@ def show(args):
 
 
 def configure(args):
+    """
+    Modify rules for a registered directory.
+
+    Applies changes to include, exclude, extensions, max_size, or sync.
+    Validates rules before saving. Acquires workspace lock for atomic update.
+
+    Args:
+        args: Parsed arguments (directory, profile, include, exclude, extensions, max_size, sync)
+
+    Returns:
+        Exit code (0=success, 1=validation error)
+    """
     db, _ = local_paths()
     registry = FileRegistry(db)
     try:
@@ -68,6 +136,7 @@ def configure(args):
             rules.max_size = args.max_size
         if args.sync is not None:
             rules.sync_enabled = args.sync == "on"
+        # Re-validate through from_dict
         rules = DirectoryRules.from_dict(rules.to_dict())
         with registry.lock():
             registry.save_rules(row["id"], rules)
@@ -83,6 +152,19 @@ def configure(args):
 
 
 def remove(args):
+    """
+    Unregister a directory (metadata only).
+
+    Requires explicit confirmation unless --yes flag provided.
+    Never deletes original files or remote Supabase records.
+    Acquires workspace lock for atomic operation.
+
+    Args:
+        args: Parsed arguments (directory, yes)
+
+    Returns:
+        Exit code (0=success, 1=not registered/cancelled)
+    """
     db, _ = local_paths()
     registry = FileRegistry(db)
     try:

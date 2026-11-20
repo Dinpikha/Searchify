@@ -1,4 +1,30 @@
-"""Display a proposal and its safety blockers; contains no execution path."""
+"""
+CLI Organize Module - Propose File Organization
+
+This module implements the `searchify organize` command for generating
+file organization proposals. It operates in PROPOSAL ONLY mode - no files
+are moved, renamed, deleted, or uploaded.
+
+Analysis:
+- Scans root-level files in registered directories
+- Proposes moves to category folders (Documents, Images, Archives)
+- Skips protected files, important configs, git-tracked projects
+- Generates safety blockers for each proposal
+
+Each operation includes:
+- Source and destination paths
+- Reason for proposal
+- Blockers (destination exists, symlinks, git dirty, backup unverified)
+- Verification requirements
+- Rollback procedure
+
+Options:
+- --max-files: Scan limit (default: 50000)
+- --backup-path: Check backup availability
+- --save: Save proposal artifact locally
+
+Used by: CLI app.py command dispatcher
+"""
 
 from searchify.cli.output import line
 from searchify.cli.workspace import local_paths
@@ -8,6 +34,15 @@ from searchify.services.organization_service import OrganizationService
 
 
 def run(args):
+    """
+    Execute organize command.
+
+    Args:
+        args: Parsed arguments (max_files, backup_path, save)
+
+    Returns:
+        Exit code (0)
+    """
     db, _ = local_paths()
     plan = OrganizationService(
         FileRegistry(db),

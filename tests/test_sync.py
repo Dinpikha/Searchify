@@ -1,3 +1,8 @@
+# Exercises incremental SyncService runs on temporary roots with in-memory Files/Summaries
+# repositories.
+# Repeated runs verify reuse, retries, deletion/rename handling, locking, and interruption-
+# safe progress.
+
 """Filesystem-to-summary integration tests with local temporary metadata only."""
 from contextlib import closing
 import hashlib

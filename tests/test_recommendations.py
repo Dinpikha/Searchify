@@ -1,3 +1,7 @@
+# Checks ReviewService and OrganizationService proposals against temporary project trees.
+# Generated-folder, duplicate, Git, and backup uncertainty remain review evidence, never
+# cleanup execution.
+
 """Evidence-based recommendations and organization plans never execute actions."""
 import json
 import os
