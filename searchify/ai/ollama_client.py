@@ -34,6 +34,7 @@ class OllamaError(RuntimeError):
         http_status: HTTP status code if error originated from HTTP response
         request_id: Request ID from Ollama response headers (for debugging)
     """
+
     def __init__(self, message, http_status=None, request_id=None):
         super().__init__(message)
         self.http_status = http_status
@@ -47,6 +48,7 @@ class _NoRedirects(HTTPRedirectHandler):
     This prevents SSRF (Server-Side Request Forgery) by ensuring the client
     never follows redirects to external or unintended endpoints.
     """
+
     # Refuse redirects so requests carrying local source text stay at the validated loopback
     # endpoint.
     def redirect_request(self, request, response, code, message, headers, new_url):

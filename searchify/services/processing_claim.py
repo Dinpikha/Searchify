@@ -211,9 +211,9 @@ class ProcessingClaim:
         self.files, self.file, self.journal = files, file, journal
         self.owner = uuid.uuid4().hex  # Unique worker identifier
         self.mutex = threading.RLock()  # Protects transition/heartbeat
-        self.stop = threading.Event()   # Signals heartbeat to stop
-        self.thread = None              # Heartbeat thread
-        self.lost = False               # Set if CAS fails (claim stolen)
+        self.stop = threading.Event()  # Signals heartbeat to stop
+        self.thread = None  # Heartbeat thread
+        self.lost = False  # Set if CAS fails (claim stolen)
 
     def acquire(self):
         """

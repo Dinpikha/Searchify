@@ -114,7 +114,7 @@ class Summarizer:
                 "prompt": f"File: {filename}\nInput:\n{content}",
                 "options": {
                     "temperature": 0,  # Request low-variance generation
-                    "num_ctx": 8192,   # Context window size
+                    "num_ctx": 8192,  # Context window size
                     "num_predict": settings.SUMMARY_MAX_OUTPUT_TOKENS,  # Max output tokens
                 },
             },
